@@ -1,0 +1,77 @@
+"""Tests for confidence scoring."""
+
+import pandas as pd
+
+from quant.core.config import ScorerConfig
+from quant.core.types import Candle, Direction, PinBar, SRLevel, SRRole, SRType, Timeframe
+from quant.signals.scorer import score_setup
+from datetime import datetime
+
+
+def _make_pin_bar(
+    wick_ratio: float = 3.0,
+    sr_strength: float = 0.8,
+    volume: float = 1000.0,
+) -> PinBar:
+    candle = Candle(
+        timestamp=datetime(2025, 1, 1),
+        open=104.0, high=105.0, low=99.5, close=104.5,
+        volume=volume, symbol="NQ", timeframe=Timeframe.H1,
+    )
+    sr = SRLevel(
+        price=100.0, sr_type=SRType.HORIZONTAL,
+        role=SRRole.SUPPORT, strength=sr_strength, touches=3,
+    )
+    return PinBar(
+        candle=candle, index=10, direction=Direction.LONG,
+        wick_ratio=wick_ratio, nearest_sr=sr, sr_distance_pct=0.005,
+    )
+
+
+def _make_df(avg_volume: float = 1000.0) -> pd.DataFrame:
+    rows = [
+        {"timestamp": datetime(2025, 1, 1), "open": 100, "high": 105,
+         "low": 99, "close": 104, "volume": avg_volume}
+    ] * 20
+    return pd.DataFrame(rows)
+
+
+class TestScorer:
+    def test_score_between_0_and_1(self):
+        pb = _make_pin_bar()
+        df = _make_df()
+        score = score_setup(pb, df, Direction.LONG)
+        assert 0.0 <= score <= 1.0
+
+    def test_stronger_sr_higher_score(self):
+        df = _make_df()
+        weak = score_setup(_make_pin_bar(sr_strength=0.2), df, None)
+        strong = score_setup(_make_pin_bar(sr_strength=0.9), df, None)
+        assert strong > weak
+
+    def test_higher_wick_ratio_higher_score(self):
+        df = _make_df()
+        small = score_setup(_make_pin_bar(wick_ratio=2.0), df, None)
+        large = score_setup(_make_pin_bar(wick_ratio=5.0), df, None)
+        assert large > small
+
+    def test_all_zero_subscore_still_works(self):
+        """Pin bar with no S/R → sr_strength=0, should not crash."""
+        candle = Candle(
+            timestamp=datetime(2025, 1, 1),
+            open=100, high=101, low=99, close=100,
+            volume=0, symbol="NQ", timeframe=Timeframe.H1,
+        )
+        pb = PinBar(
+            candle=candle, index=0, direction=Direction.LONG,
+            wick_ratio=0.0, nearest_sr=None, sr_distance_pct=0.0,
+        )
+        df = _make_df(avg_volume=0)
+        score = score_setup(pb, df, None)
+        assert 0.0 <= score <= 1.0
+
+    def test_trend_alignment_boosts_score(self):
+        df = _make_df()
+        aligned = score_setup(_make_pin_bar(), df, Direction.LONG)
+        counter = score_setup(_make_pin_bar(), df, Direction.SHORT)
+        assert aligned > counter
