@@ -48,14 +48,8 @@ def _build_tick_labels(
                 positions.append(i)
         return positions, labels
 
-    if timeframe == Timeframe.H1:
-        step = 1
-    elif timeframe == Timeframe.H4:
-        step = 2
-    elif timeframe == Timeframe.D1:
-        step = 2
-    else:
-        step = max(1, n // 40)
+    # Aim for ~25-30 labels max, regardless of timeframe
+    step = max(1, n // 25)
 
     positions = list(range(0, n, step))
     labels = []
@@ -66,9 +60,7 @@ def _build_tick_labels(
         if date_str != prev_date:
             labels.append(date_str)
             prev_date = date_str
-        elif timeframe in (Timeframe.M5, Timeframe.H1):
-            labels.append(ts.strftime("%-H:%M"))
-        elif timeframe == Timeframe.H4:
+        elif timeframe in (Timeframe.H1, Timeframe.H4):
             labels.append(ts.strftime("%-H:%M"))
         else:
             labels.append("")
@@ -103,7 +95,9 @@ def _build_figure(df: pd.DataFrame, result: AnalysisResult, signals: list[Signal
     fig.add_trace(go.Candlestick(
         x=vis_x, open=vis_df["open"], high=vis_df["high"],
         low=vis_df["low"], close=vis_df["close"],
-        name="Price", showlegend=False, increasing_line_color="#26a69a", decreasing_line_color="#ef5350",
+        name="Price", showlegend=False,
+        increasing_line_color="#26a69a", increasing_fillcolor="#26a69a",
+        decreasing_line_color="#ef5350", decreasing_fillcolor="#ef5350",
         text=vis_hover, hoverinfo="text+y",
     ))
 
@@ -151,7 +145,7 @@ def _build_figure(df: pd.DataFrame, result: AnalysisResult, signals: list[Signal
     signal_shape_start = len(fig.layout.shapes) if fig.layout.shapes else 0
     for sig in (signals or []):
         is_long = sig.direction == Direction.LONG
-        color = "#00E676" if is_long else "#FF1744"
+        color = "#26a69a" if is_long else "#ef5350"
         sig_idx = _timestamp_to_index(timestamps, sig.timestamp)
         vis_count = n - vis_start
         box_half = max(3, vis_count // 80)
@@ -174,17 +168,17 @@ def _build_figure(df: pd.DataFrame, result: AnalysisResult, signals: list[Signal
         fig.add_trace(go.Scatter(
             x=[sig_idx], y=[sig.entry_price], mode="markers",
             marker=dict(symbol="diamond", size=10, color=color, line=dict(width=1, color="white")),
-            text=[sig_hover], hoverinfo="text", showlegend=False, visible=False,
+            text=[sig_hover], hoverinfo="text", showlegend=False,
         ))
         # TP zone
         fig.add_shape(type="rect", x0=sig_idx - box_half, x1=sig_idx + box_half,
                       y0=sig.entry_price, y1=sig.take_profit,
-                      fillcolor="rgba(0,230,118,0.1)", visible=False,
+                      fillcolor="rgba(0,230,118,0.1)",
                       line=dict(color="rgba(0,230,118,0.4)", width=1, dash="dot"))
         # SL zone
         fig.add_shape(type="rect", x0=sig_idx - box_half, x1=sig_idx + box_half,
                       y0=sig.entry_price, y1=sig.stop_loss,
-                      fillcolor="rgba(255,23,68,0.1)", visible=False,
+                      fillcolor="rgba(255,23,68,0.1)",
                       line=dict(color="rgba(255,23,68,0.4)", width=1, dash="dot"))
     signal_shape_end = len(fig.layout.shapes) if fig.layout.shapes else 0
 
@@ -195,7 +189,7 @@ def _build_figure(df: pd.DataFrame, result: AnalysisResult, signals: list[Signal
         if not pbs:
             continue
         is_long = direction == Direction.LONG
-        color = "#00E676" if is_long else "#FF1744"
+        color = "#26a69a" if is_long else "#ef5350"
         symbol = "triangle-up" if is_long else "triangle-down"
         x_vals, y_vals, texts = [], [], []
         for pb in pbs:
@@ -215,7 +209,7 @@ def _build_figure(df: pd.DataFrame, result: AnalysisResult, signals: list[Signal
         fig.add_trace(go.Scatter(
             x=x_vals, y=y_vals, mode="markers",
             marker=dict(symbol=symbol, size=8, color=color, line=dict(width=1, color="white")),
-            text=texts, hoverinfo="text", showlegend=False, visible=False,
+            text=texts, hoverinfo="text", showlegend=False,
         ))
 
     # Layout — tick labels from visible window only
@@ -225,7 +219,7 @@ def _build_figure(df: pd.DataFrame, result: AnalysisResult, signals: list[Signal
     tick_pos = [p + vis_start for p in tick_pos]
     xaxis_cfg = dict(
         tickmode="array", tickvals=tick_pos, ticktext=tick_labels,
-        rangeslider_visible=False,
+        rangeslider=dict(visible=False),
         range=[vis_start - 5, n + 5],
         tickangle=-45,
     )
@@ -369,7 +363,7 @@ def create_tabbed_chart(
   --chart-bg: #131722; --grid: rgba(255,255,255,0.04);
   --axis-text: #555; --watermark: rgba(255,255,255,0.06);
   --sr-color: #00BCD4; --sr-label: #00BCD4;
-  --candle-up: #26a69a; --candle-down: #ef5350;
+  --candle-up: #ffffff; --candle-down: #ffffff;
 }}
 :root.light {{
   --bg: #ffffff; --bg2: #f8f9fa; --border: #e0e3eb;
@@ -378,7 +372,7 @@ def create_tabbed_chart(
   --chart-bg: #ffffff; --grid: rgba(0,0,0,0.06);
   --axis-text: #999; --watermark: rgba(0,0,0,0.05);
   --sr-color: #0097A7; --sr-label: #0097A7;
-  --candle-up: #089981; --candle-down: #F23645;
+  --candle-up: #000000; --candle-down: #000000;
 }}
 body {{ margin:0; padding:0; background:var(--bg); color:var(--text);
        font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
@@ -422,7 +416,7 @@ body {{ margin:0; padding:0; background:var(--bg); color:var(--text);
     <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
         <span class="toggle-label">Signals</span>
         <label class="toggle">
-            <input type="checkbox" id="signal-toggle">
+            <input type="checkbox" id="signal-toggle" checked>
             <span class="slider"></span>
             <span class="knob"></span>
         </label>
@@ -430,7 +424,7 @@ body {{ margin:0; padding:0; background:var(--bg); color:var(--text);
     <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
         <span class="toggle-label">Pin Bars</span>
         <label class="toggle">
-            <input type="checkbox" id="pinbar-toggle">
+            <input type="checkbox" id="pinbar-toggle" checked>
             <span class="slider"></span>
             <span class="knob"></span>
         </label>
@@ -548,8 +542,8 @@ var themes = {{
         watermark: 'rgba(255,255,255,0.06)', srColor: '#00BCD4',
         candleUp: '#26a69a', candleDown: '#ef5350',
         candleUpFill: '#26a69a', candleDownFill: '#ef5350',
-        sigLongFill: '#00E676', sigLongBorder: '#ffffff',
-        sigShortFill: '#FF1744', sigShortBorder: '#ffffff',
+        sigLongFill: '#26a69a', sigLongBorder: '#26a69a',
+        sigShortFill: '#ef5350', sigShortBorder: '#ef5350',
         labelBg: 'rgba(0,0,0,0.4)',
         icon: '\u263E'
     }},
