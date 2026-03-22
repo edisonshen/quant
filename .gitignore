@@ -40,3 +40,4 @@ htmlcov/
 
 # ruff
 .ruff_cache/
+.gstack/

@@ -134,9 +134,17 @@ def daytrade(ctx, symbol, data_dir, output_path):
             f"R:R {sig.rr_ratio:.1f} | Conf {sig.confidence:.0%}"
         )
 
-    # Chart
+    # Chart — tabbed view with TF switcher (5m / 1H / 4H / 1D)
+    from quant.analysis.analyzer import analyze
+    from quant.viz.charts import create_tabbed_chart
+
+    htf_results: dict[Timeframe, AnalysisResult] = {Timeframe.M5: result}
+    for tf in [Timeframe.H1, Timeframe.H4, Timeframe.D1]:
+        if tf in data:
+            htf_results[tf] = analyze(data[tf], symbol, tf, settings.analysis, min_touches=min_touches)
+
     out = Path(output_path) if output_path else Path(f"charts/{symbol}_daytrade.html")
-    create_chart(data[Timeframe.M5], result, signals, out)
+    create_tabbed_chart(data, htf_results, Timeframe.M5, signals, out)
     click.echo(f"\nChart saved to {out}")
 
 

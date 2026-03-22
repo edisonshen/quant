@@ -23,17 +23,22 @@ def detect_pin_bars_raw(
     symbol: str = "",
     timeframe: Timeframe = Timeframe.H1,
 ) -> list[PinBar]:
-    """Detect candles with significant wicks showing rejection.
+    """Detect pin bars per 小酱 book methodology.
 
-    Relaxed criteria vs textbook pin bar — any candle where:
-    1. One wick is at least min_wick_body_ratio * body (default 1.5x, relaxed from 2x)
-    2. The dominant wick is at least 40% of the total range
-    3. Body is in the opposite half of the range from the dominant wick
+    Book rules (strict):
+    1. Dominant wick > 2/3 of total range
+    2. Secondary wick < 1/3 of dominant wick (not a spinning top)
+    3. Dominant wick >= 2x body
+    4. Body in the opposite half from dominant wick
+    5. Visually prominent: amplitude >= median of recent bars ("nose vs face")
     """
     if config is None:
         config = PinBarConfig()
 
     pin_bars: list[PinBar] = []
+
+    # Pre-compute recent bar ranges for "visually prominent" check
+    ranges = (df["high"] - df["low"]).values
 
     for i in range(1, len(df)):
         row = df.iloc[i]
@@ -55,26 +60,38 @@ def detect_pin_bars_raw(
         lower = candle.lower_wick
         body = candle.body_size if candle.body_size > 0 else candle.range * 0.01
 
-        # Dominant wick must be significant portion of range
         dominant_wick = max(upper, lower)
-        if dominant_wick / candle.range < 0.40:
+        secondary_wick = min(upper, lower)
+
+        # Rule 1: Dominant wick > 2/3 of range
+        if dominant_wick / candle.range < config.min_dominant_wick_ratio:
             continue
 
-        # Wick/body ratio check
+        # Rule 2: Secondary wick < 1/3 of dominant (no spinning tops)
+        if dominant_wick > 0 and secondary_wick / dominant_wick > config.max_secondary_wick_ratio:
+            continue
+
+        # Rule 3: Wick/body ratio
         is_bearish_pin = upper > lower and upper / body >= config.min_wick_body_ratio
         is_bullish_pin = lower > upper and lower / body >= config.min_wick_body_ratio
 
         if not is_bearish_pin and not is_bullish_pin:
             continue
 
-        # Body should be in the opposite half from the dominant wick
+        # Rule 4: Body in opposite half from dominant wick
         mid = (candle.high + candle.low) / 2
         if is_bullish_pin and candle.body_bottom < mid:
-            # Body is in the lower half — not a clean bullish rejection
             continue
         if is_bearish_pin and candle.body_top > mid:
-            # Body is in the upper half — not a clean bearish rejection
             continue
+
+        # Rule 5: Visually prominent — amplitude >= median of recent bars
+        lookback_start = max(0, i - config.min_amplitude_lookback)
+        if i - lookback_start >= 5:  # need enough history
+            recent_ranges = ranges[lookback_start:i]
+            median_range = float(np.median(recent_ranges))
+            if candle.range < median_range:
+                continue
 
         direction = Direction.LONG if is_bullish_pin else Direction.SHORT
         wick_ratio = (lower / body) if is_bullish_pin else (upper / body)

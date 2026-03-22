@@ -1,4 +1,4 @@
-"""Read OHLCV data from TradingView CSV exports."""
+"""Read OHLCV data from CSV files (yfinance exports or other sources)."""
 
 from __future__ import annotations
 
@@ -11,10 +11,11 @@ from quant.core.types import Timeframe
 
 
 class CSVProvider:
-    """Reads TradingView-exported CSV files.
+    """Reads OHLCV CSV files from yfinance or other sources.
 
-    Expected CSV format (TradingView default export):
-        time, open, high, low, close, Volume
+    Expected CSV format:
+        timestamp, open, high, low, close, volume
+    Also accepts TradingView format (time, Volume with capital V).
     """
 
     def __init__(self, data_dir: Path):
@@ -85,7 +86,11 @@ class CSVProvider:
         if "volume" not in df.columns:
             df["volume"] = 0.0
 
-        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True).dt.tz_localize(None)
+        df["timestamp"] = (
+            pd.to_datetime(df["timestamp"], utc=True)
+            .dt.tz_convert("US/Pacific")
+            .dt.tz_localize(None)
+        )
         df = df.sort_values("timestamp").reset_index(drop=True)
 
         # Filter date range

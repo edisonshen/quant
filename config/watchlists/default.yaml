@@ -19,14 +19,14 @@ instruments:
     exchange: CME
     tick_size: 0.25
     point_value: 50.0
-    min_touches: 5
+    min_touches: 4
 
   - symbol: MES
     name: "Micro E-mini S&P 500"
     exchange: CME
     tick_size: 0.25
     point_value: 5.0
-    min_touches: 5
+    min_touches: 4
 
   - symbol: GC
     name: "Gold Futures"

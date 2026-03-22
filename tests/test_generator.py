@@ -14,10 +14,22 @@ def _make_analysis_with_pin_bar() -> tuple[AnalysisResult, pd.DataFrame]:
     sr_support = SRLevel(
         price=100.0, sr_type=SRType.HORIZONTAL,
         role=SRRole.SUPPORT, strength=0.95, touches=5,
+        source_tf=Timeframe.H1,
+    )
+    sr_support_htf = SRLevel(
+        price=104.3, sr_type=SRType.HORIZONTAL,
+        role=SRRole.SUPPORT, strength=0.85, touches=3,
+        source_tf=Timeframe.H4,
+    )
+    sr_support_dtf = SRLevel(
+        price=104.6, sr_type=SRType.HORIZONTAL,
+        role=SRRole.SUPPORT, strength=0.80, touches=2,
+        source_tf=Timeframe.D1,
     )
     sr_resistance = SRLevel(
         price=120.0, sr_type=SRType.HORIZONTAL,
         role=SRRole.RESISTANCE, strength=0.9, touches=4,
+        source_tf=Timeframe.D1,
     )
     candle = Candle(
         timestamp=datetime(2025, 1, 1, 10, 0),
@@ -31,7 +43,7 @@ def _make_analysis_with_pin_bar() -> tuple[AnalysisResult, pd.DataFrame]:
 
     result = AnalysisResult(
         symbol="NQ", timeframe=Timeframe.H1,
-        sr_levels=[sr_support, sr_resistance],
+        sr_levels=[sr_support, sr_support_htf, sr_support_dtf, sr_resistance],
         pin_bars=[pin_bar],
         bias=Direction.LONG,
     )
@@ -91,10 +103,10 @@ class TestGenerateSignals:
         assert signals == []
 
     def test_tp_uses_next_sr_when_available(self):
-        """TP should target the next resistance level for LONG."""
+        """TP should target the nearest S/R level above entry for LONG."""
         result, df = _make_analysis_with_pin_bar()
         signals = generate_signals(result, df)
         long_signals = [s for s in signals if s.direction == Direction.LONG]
         if long_signals:
-            # Next resistance is at 120.0
-            assert long_signals[0].take_profit == 120.0
+            # Nearest S/R above entry (100.0) is sr_support_htf at 104.3
+            assert long_signals[0].take_profit == 104.3

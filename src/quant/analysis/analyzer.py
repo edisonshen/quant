@@ -29,12 +29,16 @@ def analyze(
     config: AnalysisConfig | None = None,
     higher_tf_levels: list[SRLevel] | None = None,
     min_touches: int = 3,
+    skip_own_levels: bool = False,
 ) -> AnalysisResult:
     """Run the full analysis pipeline on a single timeframe.
 
     Args:
         higher_tf_levels: S/R levels from higher timeframes to include.
         min_touches: minimum pin bar wick tips to form a level (per-symbol).
+        skip_own_levels: if True, don't derive S/R from this TF (use only
+            higher_tf_levels). Used when this is the trading TF in multi-TF
+            analysis — the trading TF shows data, higher TFs provide levels.
     """
     if config is None:
         config = AnalysisConfig()
@@ -50,22 +54,27 @@ def analyze(
     atr = compute_atr(df)
     avg_atr = float(atr.mean())
 
-    # 2. Detect raw pin bars on this timeframe
+    # 2. Detect raw pin bars on this timeframe (always — needed for matching)
     raw_pin_bars = detect_pin_bars_raw(df, config.pin_bar, symbol, timeframe)
 
-    # 3. Derive pin bar lines from this timeframe's pin bars
-    pb_lines = derive_pin_bar_lines(raw_pin_bars, avg_atr, min_touches=min_touches)
+    if skip_own_levels:
+        # Trading TF: only use higher TF levels, don't derive own S/R
+        own_levels: list[SRLevel] = []
+        d_levels: list[SRLevel] = []
+    else:
+        # 3. Derive pin bar lines from this timeframe's pin bars
+        pb_lines = derive_pin_bar_lines(raw_pin_bars, avg_atr, min_touches=min_touches)
 
-    # 4. Traditional horizontal S/R from pivot clusters (secondary)
-    h_levels = detect_horizontal_sr(pivots, df, atr, config.sr_horizontal)
+        # 4. Traditional horizontal S/R from pivot clusters (secondary)
+        h_levels = detect_horizontal_sr(pivots, df, atr, config.sr_horizontal)
 
-    # 5. Merge: pin bar lines + pivot-based, dedup
-    own_levels = _merge_sr_levels(pb_lines, h_levels, avg_atr * 0.3)
-    own_levels = sorted(own_levels, key=lambda l: l.strength, reverse=True)[:config.max_sr_levels]
+        # 5. Merge: pin bar lines + pivot-based, dedup
+        own_levels = _merge_sr_levels(pb_lines, h_levels, avg_atr * 0.3)
+        own_levels = sorted(own_levels, key=lambda l: l.strength, reverse=True)[:config.max_sr_levels]
 
-    # 6. Diagonal trendlines (secondary, capped)
-    d_levels = detect_diagonal_sr(pivots, df, atr, config.sr_diagonal)
-    d_levels = sorted(d_levels, key=lambda l: l.strength, reverse=True)[:config.max_diagonal_levels]
+        # 6. Diagonal trendlines (secondary, capped)
+        d_levels = detect_diagonal_sr(pivots, df, atr, config.sr_diagonal)
+        d_levels = sorted(d_levels, key=lambda l: l.strength, reverse=True)[:config.max_diagonal_levels]
 
     # 7. Combine with higher TF levels, filter to visible price range
     if higher_tf_levels:
@@ -161,17 +170,64 @@ def analyze_multi_tf(
 
         all_higher_levels.extend(tf_levels)
 
-    # Dedup across timeframes
-    all_higher_levels = sorted(all_higher_levels, key=lambda l: l.strength, reverse=True)
+    # Merge across timeframes: when a lower-TF level is near a higher-TF level,
+    # absorb it — use the lower-TF price for precision (more data points),
+    # keep the higher-TF label, boost strength with confluence.
     if all_higher_levels:
-        # Use the trading TF's ATR for dedup distance
         trading_df = data[trading_tf]
         trading_atr = float(compute_atr(trading_df).mean()) if len(trading_df) > 1 else 1.0
-        all_higher_levels = _dedup_levels(all_higher_levels, trading_atr * 0.3)
+        all_higher_levels = _merge_multi_tf_levels(
+            all_higher_levels, tf_order, trading_atr * 0.5,
+        )
 
-    # Run analysis on the trading TF with higher TF levels injected
+    # Run analysis on the trading TF with higher TF levels injected.
+    # skip_own_levels=True: trading TF only shows data, doesn't derive its own S/R.
+    # Book: use higher TF for key levels, trading TF only for signals.
     trading_df = data[trading_tf]
-    return analyze(trading_df, symbol, trading_tf, config, higher_tf_levels=all_higher_levels, min_touches=min_touches)
+    return analyze(
+        trading_df, symbol, trading_tf, config,
+        higher_tf_levels=all_higher_levels, min_touches=min_touches,
+        skip_own_levels=True,
+    )
+
+
+def _merge_multi_tf_levels(
+    levels: list[SRLevel],
+    tf_order: list[Timeframe],
+    merge_dist: float,
+) -> list[SRLevel]:
+    """Merge levels across timeframes: higher TF absorbs nearby lower TF levels.
+
+    When a 1D level and a 1H level are at similar prices, keep the 1D level
+    but refine its price using the lower-TF level (more data = more precision).
+    Boost strength to reflect multi-TF confluence.
+    """
+    def _tf_rank(tf: Timeframe | None) -> int:
+        if tf is None:
+            return len(tf_order)
+        return tf_order.index(tf) if tf in tf_order else len(tf_order)
+
+    # Sort by TF rank (highest TF first), then by strength
+    levels = sorted(levels, key=lambda l: (_tf_rank(l.source_tf), -l.strength))
+
+    merged: list[SRLevel] = []
+    for level in levels:
+        absorbed = False
+        for existing in merged:
+            if abs(existing.price - level.price) <= merge_dist:
+                # Lower-TF level is near a higher-TF level — absorb it
+                # Refine price: use lower-TF price (more precise)
+                if _tf_rank(level.source_tf) > _tf_rank(existing.source_tf):
+                    existing.price = level.price
+                # Boost strength for multi-TF confluence
+                existing.strength = min(existing.strength + 0.1, 1.0)
+                existing.touches += level.touches
+                absorbed = True
+                break
+        if not absorbed:
+            merged.append(level)
+
+    return merged
 
 
 def _merge_sr_levels(

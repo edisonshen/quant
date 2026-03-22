@@ -32,8 +32,10 @@ class SRDiagonalConfig(BaseModel):
 
 
 class PinBarConfig(BaseModel):
-    min_wick_body_ratio: float = 1.5  # relaxed: any significant rejection wick
-    max_body_pct: float = 0.50  # body < 50% of range (relaxed)
+    min_dominant_wick_ratio: float = 0.667  # dominant wick > 2/3 of range (book rule)
+    max_secondary_wick_ratio: float = 0.333  # secondary wick < 1/3 of dominant (no spinning tops)
+    min_wick_body_ratio: float = 2.0  # dominant wick >= 2x body
+    min_amplitude_lookback: int = 20  # lookback for "visually prominent" check
     wick_exceed_lookback: int = 5  # wick must exceed N prior candles
     sr_proximity_pct: float = 0.005  # within 0.5% of S/R level
 
@@ -48,12 +50,12 @@ class AnalysisConfig(BaseModel):
     sr_diagonal: SRDiagonalConfig = SRDiagonalConfig()
     pin_bar: PinBarConfig = PinBarConfig()
     inside_bar: InsideBarConfig = InsideBarConfig()
-    max_sr_levels: int = 12  # cap horizontal S/R levels per timeframe
+    max_sr_levels: int = 10  # cap horizontal S/R levels per timeframe
     max_diagonal_levels: int = 3  # cap diagonal trendlines (less important for pin bars)
 
 
 class ScorerConfig(BaseModel):
-    min_confidence: float = 0.85  # only very high confidence signals
+    min_confidence: float = 0.60  # moderate confidence threshold
     # Sub-score weights
     weight_sr_strength: float = 0.30
     weight_wick_ratio: float = 0.20
@@ -65,7 +67,7 @@ class ScorerConfig(BaseModel):
 class SignalConfig(BaseModel):
     scorer: ScorerConfig = ScorerConfig()
     default_rr_target: float = 2.0  # R:R when no next S/R for TP
-    min_rr_ratio: float = 2.0  # minimum R:R to generate signal
+    min_rr_ratio: float = 1.5  # minimum R:R to generate signal (book minimum)
 
 
 class RiskConfig(BaseModel):

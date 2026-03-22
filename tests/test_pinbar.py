@@ -51,7 +51,8 @@ class TestDerivePinBarLines:
         pin_bars = detect_pin_bars_raw(pin_bar_candles)
         if not pin_bars:
             return  # skip if no pin bars in fixture
-        levels = derive_pin_bar_lines(pin_bars, atr=5.0)
+        # Use min_touches=1 since strict detection may yield few pin bars
+        levels = derive_pin_bar_lines(pin_bars, atr=5.0, min_touches=1)
         assert len(levels) > 0
         for level in levels:
             assert level.sr_type == SRType.HORIZONTAL

@@ -75,3 +75,74 @@ class TestScorer:
         aligned = score_setup(_make_pin_bar(), df, Direction.LONG)
         counter = score_setup(_make_pin_bar(), df, Direction.SHORT)
         assert aligned > counter
+
+    def test_confluence_no_levels_fallback(self):
+        """No sr_levels passed → fallback score 0.5 (backward-compat)."""
+        pb = _make_pin_bar()
+        df = _make_df()
+        score_no_levels = score_setup(pb, df, None, sr_levels=None)
+        assert 0.0 <= score_no_levels <= 1.0
+
+    def test_confluence_single_tf(self):
+        """One nearby TF → confluence 0.3."""
+        pb = _make_pin_bar()
+        df = _make_df()
+        levels = [
+            SRLevel(price=104.0, sr_type=SRType.HORIZONTAL, role=SRRole.SUPPORT,
+                    strength=0.7, touches=3, source_tf=Timeframe.H1),
+        ]
+        score = score_setup(pb, df, None, sr_levels=levels)
+        assert 0.0 <= score <= 1.0
+
+    def test_confluence_two_tfs_higher_than_one(self):
+        """Two distinct TFs nearby → higher confluence than one."""
+        pb = _make_pin_bar()
+        df = _make_df()
+        one_tf = [
+            SRLevel(price=104.0, sr_type=SRType.HORIZONTAL, role=SRRole.SUPPORT,
+                    strength=0.7, touches=3, source_tf=Timeframe.H1),
+        ]
+        two_tfs = [
+            SRLevel(price=104.0, sr_type=SRType.HORIZONTAL, role=SRRole.SUPPORT,
+                    strength=0.7, touches=3, source_tf=Timeframe.H1),
+            SRLevel(price=104.3, sr_type=SRType.HORIZONTAL, role=SRRole.SUPPORT,
+                    strength=0.7, touches=3, source_tf=Timeframe.H4),
+        ]
+        s1 = score_setup(pb, df, None, sr_levels=one_tf)
+        s2 = score_setup(pb, df, None, sr_levels=two_tfs)
+        assert s2 > s1
+
+    def test_confluence_three_tfs_highest(self):
+        """Three distinct TFs nearby → max confluence (1.0)."""
+        pb = _make_pin_bar()
+        df = _make_df()
+        three_tfs = [
+            SRLevel(price=104.0, sr_type=SRType.HORIZONTAL, role=SRRole.SUPPORT,
+                    strength=0.7, touches=3, source_tf=Timeframe.H1),
+            SRLevel(price=104.3, sr_type=SRType.HORIZONTAL, role=SRRole.SUPPORT,
+                    strength=0.7, touches=3, source_tf=Timeframe.H4),
+            SRLevel(price=104.2, sr_type=SRType.HORIZONTAL, role=SRRole.SUPPORT,
+                    strength=0.7, touches=3, source_tf=Timeframe.D1),
+        ]
+        s = score_setup(pb, df, None, sr_levels=three_tfs)
+        assert s > score_setup(pb, df, None, sr_levels=three_tfs[:2])
+
+    def test_confluence_far_levels_excluded(self):
+        """S/R levels far from pin bar price should not count."""
+        pb = _make_pin_bar()  # close=104.5
+        df = _make_df()
+        far_levels = [
+            SRLevel(price=200.0, sr_type=SRType.HORIZONTAL, role=SRRole.RESISTANCE,
+                    strength=0.9, touches=5, source_tf=Timeframe.D1),
+            SRLevel(price=50.0, sr_type=SRType.HORIZONTAL, role=SRRole.SUPPORT,
+                    strength=0.9, touches=5, source_tf=Timeframe.W1),
+        ]
+        near_levels = [
+            SRLevel(price=104.0, sr_type=SRType.HORIZONTAL, role=SRRole.SUPPORT,
+                    strength=0.7, touches=3, source_tf=Timeframe.H1),
+            SRLevel(price=104.3, sr_type=SRType.HORIZONTAL, role=SRRole.SUPPORT,
+                    strength=0.7, touches=3, source_tf=Timeframe.H4),
+        ]
+        s_far = score_setup(pb, df, None, sr_levels=far_levels)
+        s_near = score_setup(pb, df, None, sr_levels=near_levels)
+        assert s_near > s_far

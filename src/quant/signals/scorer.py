@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 from quant.core.config import ScorerConfig
-from quant.core.types import Direction, PinBar
+from quant.core.types import Direction, PinBar, SRLevel
 
 
 def score_setup(
@@ -14,6 +14,7 @@ def score_setup(
     df: pd.DataFrame,
     bias: Direction | None,
     config: ScorerConfig | None = None,
+    sr_levels: list[SRLevel] | None = None,
 ) -> float:
     """Compute a confidence score (0.0 - 1.0) for a pin bar setup.
 
@@ -22,7 +23,7 @@ def score_setup(
     - Wick ratio: larger wick → stronger rejection
     - Volume spike: volume at pin bar vs average
     - Trend alignment: pin bar direction matches bias
-    - Multi-TF confluence: placeholder (always 0.5 for now, needs multi-TF data)
+    - Multi-TF confluence: distinct timeframes among nearby S/R levels
     """
     if config is None:
         config = ScorerConfig()
@@ -31,7 +32,7 @@ def score_setup(
     wick_score = _wick_ratio_score(pin_bar)
     volume_score = _volume_spike_score(pin_bar, df)
     trend_score = _trend_alignment_score(pin_bar, bias)
-    confluence_score = 0.5  # placeholder until multi-TF is wired
+    confluence_score = _multi_tf_confluence_score(pin_bar, sr_levels)
 
     total = (
         config.weight_sr_strength * sr_strength
@@ -74,3 +75,35 @@ def _trend_alignment_score(pin_bar: PinBar, bias: Direction | None) -> float:
     if pin_bar.direction == bias:
         return 0.8
     return 0.3
+
+
+def _multi_tf_confluence_score(
+    pin_bar: PinBar,
+    sr_levels: list[SRLevel] | None,
+    proximity_pct: float = 0.005,
+) -> float:
+    """Count distinct timeframes among S/R levels near the pin bar.
+
+    Levels within ``proximity_pct`` of the pin bar's price are considered "nearby".
+    Score mapping: 0 or 1 TF → 0.3, 2 TFs → 0.6, 3+ TFs → 1.0.
+    Falls back to 0.5 when no sr_levels are provided (backward-compat).
+    """
+    if sr_levels is None:
+        return 0.5
+
+    ref_price = pin_bar.candle.close
+    threshold = ref_price * proximity_pct
+
+    nearby_tfs: set[str] = set()
+    for level in sr_levels:
+        price = level.price_at(pin_bar.index)
+        if abs(price - ref_price) <= threshold:
+            tf_key = level.source_tf.value if level.source_tf is not None else "_local"
+            nearby_tfs.add(tf_key)
+
+    n = len(nearby_tfs)
+    if n <= 1:
+        return 0.3
+    if n == 2:
+        return 0.6
+    return 1.0

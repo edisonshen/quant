@@ -40,7 +40,9 @@ def generate_signals(
     all_signals: list[Signal] = []
 
     for pin_bar in result.pin_bars:
-        confidence = score_setup(pin_bar, df, result.bias, config.scorer)
+        confidence = score_setup(
+            pin_bar, df, result.bias, config.scorer, sr_levels=result.sr_levels,
+        )
 
         if confidence < config.scorer.min_confidence:
             continue
