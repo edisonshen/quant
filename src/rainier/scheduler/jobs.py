@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -60,7 +61,12 @@ def sync(config_path: Path = DEFAULT_CONFIG, project_dir: Path | None = None) ->
 
         log = job.get("log", "/dev/null")
         log_path = project_dir / log if not log.startswith("/") else Path(log)
-        command = f"cd {project_dir} && {job['command']} >> {log_path} 2>&1"
+        # Resolve bare "uv" to full path so cron (minimal PATH) can find it
+        cmd = job["command"]
+        uv_path = shutil.which("uv")
+        if uv_path:
+            cmd = cmd.replace("uv run", f"{uv_path} run")
+        command = f"cd {project_dir} && {cmd} >> {log_path} 2>&1"
         cron_line = f"{job['schedule']} {command} {JOB_TAG} {name}"
 
         if name in active and active[name]["cron"] == job["schedule"]:
