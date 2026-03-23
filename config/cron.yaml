@@ -6,6 +6,34 @@ jobs:
   - name: fetch-mes
     description: "Fetch MES data from yfinance and regenerate daytrade chart"
     schedule: "*/5 * * * *"    # every 5 minutes
-    command: "uv run rainier fetch --symbol MES --plot"
+    command: "uv run rainier fetch --symbol MES && uv run rainier daytrade --symbol MES --data-dir data/csv"
     log: "data/fetch.log"
+    enabled: true
+
+  - name: qu-morning
+    description: "Scrape QU100 morning session"
+    schedule: "45 8 * * 1-5"    # 08:45 PST Mon-Fri
+    command: "uv run rainier scrape qu --session morning"
+    log: "data/qu-scrape.log"
+    enabled: true
+
+  - name: qu-midday
+    description: "Scrape QU100 midday session"
+    schedule: "45 10 * * 1-5"   # 10:45 PST Mon-Fri
+    command: "uv run rainier scrape qu --session midday"
+    log: "data/qu-scrape.log"
+    enabled: true
+
+  - name: qu-afternoon
+    description: "Scrape QU100 afternoon session"
+    schedule: "45 12 * * 1-5"   # 12:45 PST Mon-Fri
+    command: "uv run rainier scrape qu --session afternoon"
+    log: "data/qu-scrape.log"
+    enabled: true
+
+  - name: qu-close
+    description: "Scrape QU100 close session"
+    schedule: "0 15 * * 1-5"    # 15:00 PST Mon-Fri
+    command: "uv run rainier scrape qu --session close"
+    log: "data/qu-scrape.log"
     enabled: true
