@@ -23,6 +23,29 @@ def cli(ctx, config_path):
 
 
 @cli.command()
+@click.option("--symbol", default="MES", help="Symbol to fetch (MES, NQ, ES, GC)")
+@click.option("--data-dir", default="data/csv", help="Output directory for CSV files")
+@click.option("--plot/--no-plot", default=False, help="Run daytrade analysis + chart after fetch")
+@click.pass_context
+def fetch(ctx, symbol, data_dir, plot):
+    """Fetch latest data from yfinance and merge with existing CSVs."""
+    from quant.data.yfinance_provider import fetch_symbol
+
+    data_path = Path(data_dir)
+    tfs = [Timeframe.D1, Timeframe.H4, Timeframe.H1, Timeframe.M5]
+
+    click.echo(f"Fetching {symbol} data from yfinance...")
+    results = fetch_symbol(symbol, tfs, data_path)
+
+    for tf, count in results.items():
+        click.echo(f"  {tf.value}: {count} candles")
+
+    if plot:
+        click.echo()
+        ctx.invoke(daytrade, symbol=symbol, data_dir=data_dir, output_path=None)
+
+
+@cli.command()
 @click.option("--symbol", required=True, help="Instrument symbol (MES, NQ, GC)")
 @click.option("--timeframe", "tf", required=True, help="Timeframe (1D, 4H, 1H, 15m, 5m)")
 @click.option("--csv", "csv_path", required=True, type=click.Path(exists=True), help="CSV file")
@@ -243,3 +266,52 @@ def report(ctx, csv_path, symbol, tf):
 
     report_text = generate_daily_report({symbol: result}, {symbol: signals})
     click.echo(report_text)
+
+
+@cli.group()
+def jobs():
+    """Manage scheduled jobs (config/cron.yaml → system crontab)."""
+    pass
+
+
+@jobs.command(name="list")
+def jobs_list():
+    """Show all jobs from cron.yaml and their crontab status."""
+    from quant.scheduler.jobs import list_active, load_config
+
+    config_jobs = load_config()
+    active = {j["name"] for j in list_active()}
+
+    for job in config_jobs:
+        name = job["name"]
+        enabled = job.get("enabled", True)
+        status = "ACTIVE" if name in active else ("DISABLED" if not enabled else "NOT SYNCED")
+        click.echo(f"  {name:20s} {job['schedule']:20s} {status}")
+        click.echo(f"    {job.get('description', '')}")
+        click.echo(f"    cmd: {job['command']}")
+        click.echo()
+
+
+@jobs.command(name="sync")
+def jobs_sync():
+    """Sync cron.yaml jobs to system crontab."""
+    from quant.scheduler.jobs import sync
+
+    actions = sync(project_dir=Path.cwd())
+    for name, action in actions.items():
+        click.echo(f"  {name}: {action}")
+    click.echo("Done.")
+
+
+@jobs.command(name="stop")
+@click.option("--name", required=True, help="Job name to remove from crontab")
+def jobs_stop(name):
+    """Remove a job from system crontab (keeps it in cron.yaml)."""
+    from quant.scheduler.jobs import _remove_job, list_active
+
+    active = {j["name"] for j in list_active()}
+    if name not in active:
+        click.echo(f"Job '{name}' not found in crontab.")
+        return
+    _remove_job(name)
+    click.echo(f"Removed '{name}' from crontab.")

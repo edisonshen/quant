@@ -22,7 +22,7 @@ Layer 1: Feature Extraction (per-bar — existing codebase)
 ```
 src/quant/
 ├── core/           types.py (all shared dataclasses), config.py (Pydantic), models.py (ORM), database.py
-├── data/           provider.py (protocol), csv_provider.py, ingest.py (CSV→PostgreSQL)
+├── data/           provider.py (protocol), csv_provider.py, yfinance_provider.py
 ├── analysis/       analyzer.py (orchestrator), pivots.py, pinbar.py, sr_horizontal.py, sr_diagonal.py, bias.py, inside_bar.py
 ├── features/       extractor.py (AnalysisResult→ML features), labels.py (backtest→training labels)
 ├── signals/        generator.py (entry/SL/TP), scorer.py (weighted confidence + multi-TF confluence)
@@ -31,7 +31,7 @@ src/quant/
 ├── alerts/         discord.py (webhook notifications)
 ├── reports/        daily.py (daily review + next-day outlook)
 ├── trader/         (Phase 3 placeholder — IB TWS execution)
-└── scheduler/      (Phase 3 placeholder — job scheduling)
+└── scheduler/      jobs.py (cron.yaml → system crontab sync)
 ```
 
 ## Commands
@@ -47,11 +47,17 @@ uv run pytest tests/test_pinbar.py -v
 uv run ruff check src/ tests/
 
 # CLI commands
+uv run quant fetch --symbol MES --plot           # fetch latest data from yfinance + chart
 uv run quant scan --symbol NQ --timeframe 1H --csv data/csv/NQ_1H.csv
 uv run quant daytrade --symbol NQ --data-dir data/csv
 uv run quant backtest --symbol NQ --start 2024-01-01 --end 2026-03-01
 uv run quant chart --symbol NQ --timeframe 1H
 uv run quant report
+
+# Scheduled jobs (config/cron.yaml)
+uv run quant jobs list                            # show all jobs and status
+uv run quant jobs sync                            # sync cron.yaml → system crontab
+uv run quant jobs stop --name fetch-mes           # remove job from crontab
 ```
 
 ## Key Conventions

@@ -30,14 +30,46 @@ Built around the 小酱 pin bar methodology: S/R detection → pin bar confirmat
 cd quant
 uv sync
 
-# scan a TradingView CSV export for setups
-uv run quant scan --symbol NQ --timeframe 1H --csv data/csv/NQ_1H.csv
+# fetch latest futures data from yfinance (MES, NQ, ES, GC)
+uv run quant fetch --symbol MES --plot
+
+# scan for pin bar setups
+uv run quant scan --symbol MES --timeframe 1H --csv data/csv/MES_1H.csv
+
+# multi-TF day trading analysis (1D + 4H + 1H + 5m)
+uv run quant daytrade --symbol MES --data-dir data/csv
 
 # generate an interactive chart
-uv run quant chart --symbol NQ --timeframe 1H
+uv run quant chart --symbol MES --timeframe 1H --csv data/csv/MES_1H.csv
 
 # run backtest
-uv run quant backtest --symbol NQ --start 2024-01-01 --end 2026-03-01
+uv run quant backtest --symbol MES --timeframe 1H --csv data/csv/MES_1H.csv --start 2024-01-01 --end 2026-03-01
+```
+
+## Scheduled Data Fetching
+
+Jobs are defined in `config/cron.yaml` and synced to system crontab:
+
+```bash
+# list configured jobs
+uv run quant jobs list
+
+# activate jobs (installs to system crontab)
+uv run quant jobs sync
+
+# stop a job
+uv run quant jobs stop --name fetch-mes
+```
+
+Add more jobs by editing `config/cron.yaml`:
+
+```yaml
+jobs:
+  - name: fetch-mes
+    schedule: "*/30 * * * *"
+    command: "uv run quant fetch --symbol MES --plot"
+    log: "data/fetch.log"
+    enabled: true
 ```
 
 ## Project Structure
@@ -52,14 +84,15 @@ quant/
 │   └── labels/                # Hand-labeled ground truth for validation
 ├── src/quant/
 │   ├── core/                  # Types, config, database, ORM models
-│   ├── data/                  # DataProvider protocol, CSV reader, DB ingest
+│   ├── data/                  # DataProvider protocol, CSV reader, yfinance fetcher
 │   ├── analysis/              # Pivots, S/R (horizontal + diagonal), pin bars, inside bars, bias
 │   ├── signals/               # Confidence scorer, signal generator, TraderSync journal export
 │   ├── viz/                   # Plotly charts
 │   ├── alerts/                # Discord webhooks
 │   ├── reports/               # Daily review + next-day outlook
 │   ├── backtest/              # Event-driven backtest engine
-│   └── trader/                # (Phase 3) IB executor, risk manager, reconciler
+│   ├── trader/                # (Phase 3) IB executor, risk manager, reconciler
+│   └── scheduler/             # Job management (cron.yaml → system crontab)
 └── tests/
 ```
 
@@ -77,9 +110,8 @@ All parameters live in `config/settings.yaml` and are loaded via pydantic-settin
 
 | Source | Use | Phase |
 |--------|-----|-------|
-| TradingView CSV | Offline development & backtesting | 1 |
+| yfinance | Automated futures data fetch (15-min delay) | 1 |
 | Interactive Brokers TWS | Real-time futures data + execution | 3 |
-| Alpaca | Equities (secondary, deferred) | — |
 
 ## Tech Stack
 
