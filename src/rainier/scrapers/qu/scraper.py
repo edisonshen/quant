@@ -166,11 +166,19 @@ class QUScraper(BaseScraper):
                 self.log.warning("cdp_wrong_page", url=current_url,
                                  hint="Navigate to QU100 page in Chrome first")
             await goto_with_retry(page, self._qu_config.url)
-        await page.wait_for_selector(sel.QU100_TABLE)
 
-        # Change date if requested
+        # Change date if requested (before initial search)
         if target_date:
             await self._set_date(target_date)
+
+        # Click search to load the table (table may not exist until queried)
+        search_btn = await page.query_selector(sel.SEARCH_BUTTON)
+        if search_btn:
+            await search_btn.click()
+            await asyncio.sleep(2)
+
+        # Wait for the table to appear
+        await page.wait_for_selector(sel.QU100_TABLE, timeout=15000)
 
         # Read the data date from the date picker (e.g., "2026-03-13")
         data_date_str = await page.get_attribute(sel.DATE_INPUT, "value")
