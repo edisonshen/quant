@@ -91,6 +91,15 @@ scraping:
     afternoon: "12:35"
     close: "14:35"
 
+# --- IBKR data connection ---
+
+ibkr:
+  host: "127.0.0.1"
+  port: 4001          # 7497=TWS paper, 7496=TWS live, 4002=Gateway paper, 4001=Gateway live
+  client_id: 1
+  timeout: 30
+  readonly: true
+
 # --- LLM analysis ---
 
 llm:

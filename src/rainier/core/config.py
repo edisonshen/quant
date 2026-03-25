@@ -82,6 +82,14 @@ class RiskConfig(BaseModel):
     position_size_risk_pct: float = 0.01
 
 
+class IBKRConfig(BaseModel):
+    host: str = "127.0.0.1"
+    port: int = 7497  # 7497=TWS paper, 7496=TWS live, 4002=Gateway paper, 4001=Gateway live
+    client_id: int = 1
+    timeout: int = 30  # connection timeout in seconds
+    readonly: bool = True  # read-only API mode (no order submission)
+
+
 class DiscordConfig(BaseModel):
     webhook_url: str = ""
     enabled: bool = False
@@ -210,6 +218,9 @@ class Settings(BaseSettings):
     # Notifications
     notify: NotifyConfig = NotifyConfig()
 
+    # IBKR (Interactive Brokers) data connection
+    ibkr: IBKRConfig = IBKRConfig()
+
 
 class InstrumentConfig(BaseModel):
     symbol: str
@@ -218,6 +229,10 @@ class InstrumentConfig(BaseModel):
     tick_size: float = 0.25
     point_value: float = 1.0
     min_touches: int = 3
+    # IBKR contract fields
+    ib_symbol: str = ""  # IBKR symbol (defaults to symbol if empty)
+    ib_sec_type: str = "CONTFUT"  # CONTFUT, FUT, STK
+    ib_currency: str = "USD"
 
 
 def load_settings(config_path: Path | None = None) -> Settings:
@@ -257,6 +272,8 @@ def load_settings(config_path: Path | None = None) -> Settings:
         kwargs["llm"] = LLMAnalysisConfig(**yaml_config["llm"])
     if "notify" in yaml_config:
         kwargs["notify"] = NotifyConfig(**yaml_config["notify"])
+    if "ibkr" in yaml_config:
+        kwargs["ibkr"] = IBKRConfig(**yaml_config["ibkr"])
 
     return Settings(**kwargs)
 

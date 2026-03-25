@@ -1,0 +1,81 @@
+"""Shared persistence utilities — CSV merge + database upsert for candle data."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pandas as pd
+import structlog
+
+from rainier.core.types import Timeframe
+
+log = structlog.get_logger()
+
+
+def save_candles(
+    df: pd.DataFrame,
+    symbol: str,
+    timeframe: Timeframe,
+    data_dir: Path,
+) -> int:
+    """Save candles to CSV (merging with existing) and DB. Returns total row count."""
+    data_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = data_dir / f"{symbol}_{timeframe.value}.csv"
+    df = merge_with_existing(df, csv_path)
+    df.to_csv(csv_path, index=False)
+    persist_to_db(df, symbol, timeframe)
+    return len(df)
+
+
+def merge_with_existing(new_df: pd.DataFrame, csv_path: Path) -> pd.DataFrame:
+    """Merge new data with existing CSV, dedup on timestamp."""
+    if csv_path.exists():
+        existing = pd.read_csv(csv_path)
+        existing["timestamp"] = pd.to_datetime(existing["timestamp"], utc=True)
+        combined = pd.concat([existing, new_df], ignore_index=True)
+        combined = combined.drop_duplicates(subset="timestamp", keep="last")
+        combined = combined.sort_values("timestamp").reset_index(drop=True)
+        return combined
+    return new_df
+
+
+def persist_to_db(df: pd.DataFrame, symbol: str, tf: Timeframe) -> None:
+    """Upsert candle data into the CandleRecord table."""
+    try:
+        from sqlalchemy import select
+
+        from rainier.core.database import get_session
+        from rainier.core.models import CandleRecord
+
+        with get_session() as db:
+            for _, row in df.iterrows():
+                ts = row["timestamp"].to_pydatetime().replace(tzinfo=None)
+                existing = db.execute(
+                    select(CandleRecord).where(
+                        CandleRecord.symbol == symbol,
+                        CandleRecord.timeframe == tf.value,
+                        CandleRecord.timestamp == ts,
+                    )
+                ).scalar_one_or_none()
+
+                if existing:
+                    existing.open = float(row["open"])
+                    existing.high = float(row["high"])
+                    existing.low = float(row["low"])
+                    existing.close = float(row["close"])
+                    existing.volume = float(row["volume"])
+                else:
+                    db.add(CandleRecord(
+                        symbol=symbol,
+                        timeframe=tf.value,
+                        timestamp=ts,
+                        open=float(row["open"]),
+                        high=float(row["high"]),
+                        low=float(row["low"]),
+                        close=float(row["close"]),
+                        volume=float(row["volume"]),
+                    ))
+
+        log.info("db_persisted", symbol=symbol, timeframe=tf.value, rows=len(df))
+    except Exception as exc:
+        log.warning("db_persist_skipped", symbol=symbol, reason=str(exc))
