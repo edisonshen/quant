@@ -69,7 +69,8 @@ def sync(config_path: Path = DEFAULT_CONFIG, project_dir: Path | None = None) ->
         command = f"cd {project_dir} && {cmd} >> {log_path} 2>&1"
         cron_line = f"{job['schedule']} {command} {JOB_TAG} {name}"
 
-        if name in active and active[name]["cron"] == job["schedule"]:
+        existing_cmd = active[name]["command"] if name in active else ""
+        if name in active and active[name]["cron"] == job["schedule"] and command == existing_cmd:
             actions[name] = "unchanged"
         else:
             _remove_job(name)
