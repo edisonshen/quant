@@ -1,10 +1,84 @@
 # TODOS
 
-## Chart / Visualization
+## QU100 Stock Screener (蔡森 多空转折一手抓)
 
-(No open items)
+Design doc: `docs/stock_screener_design.md`
+Book: 蔡森 "多空转折一手抓" at `/Users/pinkbear/Downloads/多空转折一手抓(高清).pdf`
 
-## AI/ML Pipeline
+### Phase 1 — Foundation (no blockers, start here)
+
+- [ ] **#1 pattern_primitives.py** — Swing points, necklines, breakout detection, volume-price
+  - File: `src/rainier/analysis/pattern_primitives.py` (NEW)
+  - SwingPoint: local high/low using N-bar lookback (configurable `swing_lookback`)
+  - Neckline: iterative linear regression, >= 2 touch points
+  - Breakout: price crosses level + 带量突破 (vol > 1.5x avg)
+  - VolumePriceSignal: 价涨量增 vs 量价背离
+
+- [ ] **#2 target_calculator.py** — 涨幅/跌幅满足 price target calculations
+  - File: `src/rainier/analysis/target_calculator.py` (NEW)
+  - distance = |key_level - neckline|, target = neckline ± distance, wave2 = wave1 ± distance
+
+- [ ] **#4 core/types.py** — Add PatternSignal, MoneyFlowSignal, SectorTrend, DailyQUScore, StockScreenResult
+
+- [ ] **#3 stock_patterns.py** — W bottom detector [blocked by #1, #2]
+  - File: `src/rainier/analysis/stock_patterns.py` (NEW)
+  - Two swing lows ~same level (3%), swing high between = neckline, breakout = confirmed
+
+- [ ] **#5 Tests** [blocked by #1, #2, #3]
+  - `tests/test_pattern_primitives.py` + `tests/test_stock_patterns.py`
+
+- [ ] **#6 Visual validation gate** [blocked by #1, #3]
+  - Overlay swing points/necklines on Plotly charts, compare to TradingView on 10 stocks
+
+### Phase 2 — Money Flow + Sector
+
+- [ ] **#7 stock_screener.py** — Layer 1 QU100 money flow screening [blocked by #4]
+  - Two-step query: MoneyFlowSnapshot + StockCapitalFlow
+  - Scoring: Long in=0.5, direction+=0.2, rank<=30=+0.15, improving=+0.1, 3+ days=+0.05
+
+- [ ] **#8 sector_analyzer.py** — Layer 2 sector trends [blocked by #7]
+  - Group by sector, net_sentiment, bullish/bearish/neutral, +0.1 boost
+
+### Phase 3 — Remaining Bullish Patterns
+
+- [ ] **#9 Five more bullish patterns** [blocked by #1, #2, #3]
+  - 破底翻 (Tier 1), 下飘旗形, 头肩底, 收敛三角形底部, 破底翻W底
+
+### Phase 4 — Bearish + Scoring
+
+- [ ] **#10 Six bearish mirrors + composite scoring** [blocked by #7, #8, #9]
+  - M头, 假突破, 上飘旗形, 头肩顶, 收敛三角形头部, 假突破头肩顶
+  - Composite: 0.25 money_flow + 0.10 sector + 0.65 pattern
+
+### Phase 5 — LLM Vision Validation
+
+- [ ] **#11 llm_validator.py** — Anthropic API pattern validation [blocked by #3, #6]
+  - Render chart PNG → Claude Sonnet → confidence 1-10
+  - Combined = 0.6 * rule + 0.4 * LLM, fallback on error
+  - Add `anthropic` + `kaleido` to pyproject.toml
+
+### Phase 6 — Persistence + Report
+
+- [ ] **#12 Database tables** — StockPatternSignal, StockScreenRecord [blocked by #4]
+- [ ] **#13 Report + CLI + Discord** [blocked by #10, #11, #12]
+  - `rainier screen` command, Discord alerts, 16:30 PST daily scheduler
+
+### Phase 7 — Visualization
+
+- [ ] **#14 Interactive pattern overlay charts** [blocked by #6, #10]
+
+### Pattern Weights (Tier 1-4)
+
+| Tier | Patterns | Weight |
+|------|----------|--------|
+| 1 | 破底翻, 假突破 | 1.0 |
+| 2 | W底, M头, 头肩底/顶 | 0.80-0.85 |
+| 3 | 旗形, 假突破+头肩 | 0.75 |
+| 4 | 三角形 | 0.65 |
+
+---
+
+## AI/ML Pipeline (Futures)
 
 ### ScoringStrategy protocol
 **What:** Build BookScorer wrapping existing `score_setup`, MLScorer interface. Pipeline-first: validate end-to-end with BookScorer before swapping in ML.
