@@ -1,7 +1,8 @@
-"""Fetch OHLCV data from yfinance and save to CSV + database."""
+"""YFinance data provider — fetches OHLCV from Yahoo Finance."""
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -30,6 +31,43 @@ TF_TO_YF: dict[Timeframe, tuple[str, str]] = {
 }
 
 
+class YFinanceProvider:
+    """DataProvider implementation backed by yfinance."""
+
+    def get_candles(
+        self,
+        symbol: str,
+        timeframe: Timeframe,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> pd.DataFrame:
+        """Fetch candles from yfinance, return normalized DataFrame."""
+        ticker = SYMBOL_TO_TICKER.get(symbol, symbol)
+        if timeframe not in TF_TO_YF:
+            raise ValueError(f"Unsupported timeframe {timeframe} for yfinance")
+
+        yf_interval, yf_period = TF_TO_YF[timeframe]
+        raw = yf.Ticker(ticker).history(period=yf_period, interval=yf_interval)
+
+        if raw.empty:
+            log.warning("yfinance_no_data", symbol=symbol, timeframe=timeframe.value)
+            return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+
+        df = _normalize(raw)
+
+        # Resample 1h → 4h if needed
+        if timeframe == Timeframe.H4:
+            df = _resample_4h(df)
+
+        # Filter date range
+        if start:
+            df = df[df["timestamp"] >= pd.Timestamp(start, tz="UTC")]
+        if end:
+            df = df[df["timestamp"] <= pd.Timestamp(end, tz="UTC")]
+
+        return df.reset_index(drop=True)
+
+
 def fetch_symbol(
     symbol: str,
     timeframes: list[Timeframe],
@@ -38,38 +76,18 @@ def fetch_symbol(
     """Fetch data for a symbol across timeframes, merge with existing CSVs.
 
     Returns dict of {timeframe: total_rows} after merge.
+    Backward-compatible wrapper around YFinanceProvider.
     """
-    ticker = SYMBOL_TO_TICKER.get(symbol)
-    if not ticker:
-        raise ValueError(f"Unknown symbol {symbol}. Known: {list(SYMBOL_TO_TICKER)}")
+    from rainier.data.persistence import save_candles
 
-    data_dir.mkdir(parents=True, exist_ok=True)
+    provider = YFinanceProvider()
     results: dict[Timeframe, int] = {}
 
     for tf in timeframes:
-        yf_interval, yf_period = TF_TO_YF[tf]
-        raw = yf.Ticker(ticker).history(period=yf_period, interval=yf_interval)
-
-        if raw.empty:
+        df = provider.get_candles(symbol, tf)
+        if df.empty:
             continue
-
-        df = _normalize(raw)
-
-        # Resample 1h → 4h if needed
-        if tf == Timeframe.H4:
-            df = _resample_4h(df)
-
-        # Merge with existing CSV
-        csv_path = data_dir / f"{symbol}_{tf.value}.csv"
-        df = _merge_with_existing(df, csv_path)
-
-        # Save to CSV
-        df.to_csv(csv_path, index=False)
-
-        # Save to database
-        _persist_to_db(df, symbol, tf)
-
-        results[tf] = len(df)
+        results[tf] = save_candles(df, symbol, tf, data_dir)
 
     return results
 
@@ -98,57 +116,3 @@ def _resample_4h(df: pd.DataFrame) -> pd.DataFrame:
         "volume": "sum",
     }).dropna()
     return resampled.reset_index()
-
-
-def _persist_to_db(df: pd.DataFrame, symbol: str, tf: Timeframe) -> None:
-    """Upsert candle data into the CandleRecord table."""
-    try:
-        from sqlalchemy import select
-
-        from rainier.core.database import get_session
-        from rainier.core.models import CandleRecord
-
-        with get_session() as db:
-            for _, row in df.iterrows():
-                ts = row["timestamp"].to_pydatetime().replace(tzinfo=None)
-                existing = db.execute(
-                    select(CandleRecord).where(
-                        CandleRecord.symbol == symbol,
-                        CandleRecord.timeframe == tf.value,
-                        CandleRecord.timestamp == ts,
-                    )
-                ).scalar_one_or_none()
-
-                if existing:
-                    existing.open = float(row["open"])
-                    existing.high = float(row["high"])
-                    existing.low = float(row["low"])
-                    existing.close = float(row["close"])
-                    existing.volume = float(row["volume"])
-                else:
-                    db.add(CandleRecord(
-                        symbol=symbol,
-                        timeframe=tf.value,
-                        timestamp=ts,
-                        open=float(row["open"]),
-                        high=float(row["high"]),
-                        low=float(row["low"]),
-                        close=float(row["close"]),
-                        volume=float(row["volume"]),
-                    ))
-
-        log.info("db_persisted", symbol=symbol, timeframe=tf.value, rows=len(df))
-    except Exception as exc:
-        log.warning("db_persist_skipped", symbol=symbol, reason=str(exc))
-
-
-def _merge_with_existing(new_df: pd.DataFrame, csv_path: Path) -> pd.DataFrame:
-    """Merge new data with existing CSV, dedup on timestamp."""
-    if csv_path.exists():
-        existing = pd.read_csv(csv_path)
-        existing["timestamp"] = pd.to_datetime(existing["timestamp"], utc=True)
-        combined = pd.concat([existing, new_df], ignore_index=True)
-        combined = combined.drop_duplicates(subset="timestamp", keep="last")
-        combined = combined.sort_values("timestamp").reset_index(drop=True)
-        return combined
-    return new_df

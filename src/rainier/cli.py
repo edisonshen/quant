@@ -25,20 +25,35 @@ def cli(ctx, config_path):
 @cli.command()
 @click.option("--symbol", default="MES", help="Symbol to fetch (MES, NQ, ES, GC)")
 @click.option("--data-dir", default="data/csv", help="Output directory for CSV files")
+@click.option(
+    "--provider", "provider_type", default="auto",
+    type=click.Choice(["auto", "ibkr", "yfinance"]),
+    help="Data source: auto (IBKR→yfinance fallback), ibkr, or yfinance",
+)
 @click.option("--plot/--no-plot", default=False, help="Run daytrade analysis + chart after fetch")
 @click.pass_context
-def fetch(ctx, symbol, data_dir, plot):
-    """Fetch latest data from yfinance and merge with existing CSVs."""
-    from rainier.data.yfinance_provider import fetch_symbol
+def fetch(ctx, symbol, data_dir, provider_type, plot):
+    """Fetch latest data and merge with existing CSVs."""
+    from rainier.data import get_provider
+    from rainier.data.persistence import save_candles
 
     data_path = Path(data_dir)
     tfs = [Timeframe.D1, Timeframe.H4, Timeframe.H1, Timeframe.M5]
 
-    click.echo(f"Fetching {symbol} data from yfinance...")
-    results = fetch_symbol(symbol, tfs, data_path)
+    source_label = {"auto": "yfinance (IBKR fallback)", "ibkr": "IBKR", "yfinance": "yfinance"}
+    click.echo(f"Fetching {symbol} data via {source_label[provider_type]}...")
 
-    for tf, count in results.items():
-        click.echo(f"  {tf.value}: {count} candles")
+    provider = get_provider(provider_type)
+    for tf in tfs:
+        try:
+            df = provider.get_candles(symbol, tf)
+            if df.empty:
+                click.echo(f"  {tf.value}: no data")
+                continue
+            count = save_candles(df, symbol, tf, data_path)
+            click.echo(f"  {tf.value}: {count} candles")
+        except Exception as e:
+            click.echo(f"  {tf.value}: ERROR - {e}")
 
     if plot:
         click.echo()
