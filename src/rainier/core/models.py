@@ -121,6 +121,9 @@ class Stock(Base):
 
 class MoneyFlowSnapshot(Base):
     __tablename__ = "money_flow_snapshots"
+    # Logical key: (data_date, ranking_type, rank) — one stock per rank per day.
+    # TimescaleDB hypertable requires captured_at in unique constraints,
+    # so upsert logic in scraper.py enforces this at the application level.
     __table_args__ = (PrimaryKeyConstraint("id", "captured_at"),)
 
     id: Mapped[int] = mapped_column(BigInteger, autoincrement=True)
@@ -129,8 +132,8 @@ class MoneyFlowSnapshot(Base):
     data_date: Mapped[date] = mapped_column(Date, nullable=False)
     view_type: Mapped[str] = mapped_column(String(10), nullable=False, server_default="daily")
     ranking_type: Mapped[str] = mapped_column(String(10), nullable=False)
-    stock_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("stocks.id"), nullable=False, index=True
+    symbol: Mapped[str] = mapped_column(
+        String(10), ForeignKey("stocks.symbol"), nullable=False, index=True
     )
     rank: Mapped[int] = mapped_column(Integer, nullable=False)
     daily_change: Mapped[int | None] = mapped_column(Integer)
@@ -139,7 +142,11 @@ class MoneyFlowSnapshot(Base):
     long_short: Mapped[str | None] = mapped_column(String(50))
     raw_data: Mapped[dict | None] = mapped_column(JSONB)
 
-    stock: Mapped[Stock] = relationship(back_populates="money_flow_snapshots")
+    stock: Mapped[Stock] = relationship(
+        back_populates="money_flow_snapshots",
+        foreign_keys=[symbol],
+        primaryjoin="MoneyFlowSnapshot.symbol == Stock.symbol",
+    )
 
 
 class StockCapitalFlow(Base):
@@ -147,8 +154,8 @@ class StockCapitalFlow(Base):
     __table_args__ = (PrimaryKeyConstraint("id", "flow_date"),)
 
     id: Mapped[int] = mapped_column(BigInteger, autoincrement=True)
-    stock_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("stocks.id"), nullable=False, index=True
+    symbol: Mapped[str] = mapped_column(
+        String(10), ForeignKey("stocks.symbol"), nullable=False, index=True
     )
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     flow_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -161,7 +168,11 @@ class StockCapitalFlow(Base):
     rank_total: Mapped[int | None] = mapped_column(Integer)
     raw_data: Mapped[dict | None] = mapped_column(JSONB)
 
-    stock: Mapped[Stock] = relationship(back_populates="capital_flows")
+    stock: Mapped[Stock] = relationship(
+        back_populates="capital_flows",
+        foreign_keys=[symbol],
+        primaryjoin="StockCapitalFlow.symbol == Stock.symbol",
+    )
 
 
 class CapitalFlowBar(Base):
@@ -169,8 +180,8 @@ class CapitalFlowBar(Base):
     __table_args__ = (PrimaryKeyConstraint("id", "bar_time"),)
 
     id: Mapped[int] = mapped_column(BigInteger, autoincrement=True)
-    stock_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("stocks.id"), nullable=False, index=True
+    symbol: Mapped[str] = mapped_column(
+        String(10), ForeignKey("stocks.symbol"), nullable=False, index=True
     )
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     bar_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -179,19 +190,23 @@ class CapitalFlowBar(Base):
     near_term_flow: Mapped[float | None] = mapped_column(Float)
     raw_data: Mapped[dict | None] = mapped_column(JSONB)
 
-    stock: Mapped[Stock] = relationship(back_populates="capital_flow_bars")
+    stock: Mapped[Stock] = relationship(
+        back_populates="capital_flow_bars",
+        foreign_keys=[symbol],
+        primaryjoin="CapitalFlowBar.symbol == Stock.symbol",
+    )
 
 
 class StockPrice(Base):
     __tablename__ = "stock_prices"
     __table_args__ = (
         PrimaryKeyConstraint("id", "date"),
-        UniqueConstraint("stock_id", "date", name="uq_stock_price_date"),
+        UniqueConstraint("symbol", "date", name="uq_stock_price_symbol_date"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, autoincrement=True)
-    stock_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("stocks.id"), nullable=False, index=True
+    symbol: Mapped[str] = mapped_column(
+        String(10), ForeignKey("stocks.symbol"), nullable=False, index=True
     )
     date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     open: Mapped[float | None] = mapped_column(Float)
@@ -200,15 +215,19 @@ class StockPrice(Base):
     close: Mapped[float | None] = mapped_column(Float)
     volume: Mapped[int | None] = mapped_column(BigInteger)
 
-    stock: Mapped[Stock] = relationship(back_populates="prices")
+    stock: Mapped[Stock] = relationship(
+        back_populates="prices",
+        foreign_keys=[symbol],
+        primaryjoin="StockPrice.symbol == Stock.symbol",
+    )
 
 
 class ChartImage(Base):
     __tablename__ = "chart_images"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    stock_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("stocks.id"), nullable=False, index=True
+    symbol: Mapped[str] = mapped_column(
+        String(10), ForeignKey("stocks.symbol"), nullable=False, index=True
     )
     captured_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -217,7 +236,11 @@ class ChartImage(Base):
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
     file_size_bytes: Mapped[int | None] = mapped_column(Integer)
 
-    stock: Mapped[Stock] = relationship(back_populates="chart_images")
+    stock: Mapped[Stock] = relationship(
+        back_populates="chart_images",
+        foreign_keys=[symbol],
+        primaryjoin="ChartImage.symbol == Stock.symbol",
+    )
 
 
 class LLMAnalysisRecord(Base):

@@ -9,7 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from rainier.core.database import get_session
-from rainier.core.models import MoneyFlowSnapshot, Stock
+from rainier.core.models import MoneyFlowSnapshot
 from rainier.core.types import SectorTrend
 
 log = logging.getLogger(__name__)
@@ -53,9 +53,8 @@ def _analyze_sectors(session: Session) -> list[SectorTrend]:
             MoneyFlowSnapshot.sector,
             MoneyFlowSnapshot.long_short,
             MoneyFlowSnapshot.rank,
-            Stock.symbol,
+            MoneyFlowSnapshot.symbol,
         )
-        .join(Stock, MoneyFlowSnapshot.stock_id == Stock.id)
         .filter(MoneyFlowSnapshot.captured_at == latest_ts)
         .all()
     )
