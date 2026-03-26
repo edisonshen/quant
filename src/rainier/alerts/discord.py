@@ -85,27 +85,42 @@ def _format_summary_embed(candidates: list[StockCandidate]) -> dict:
     """Format a summary table embed for all candidates."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     header = (
-        f"{'#':>3} {'Symbol':<6} {'Rank':>4} {'Chg':>4} "
-        f"{'Flow':>4} {'Pattern':<12} {'Conf':>5}"
+        f"{'#':>3} {'Sym':<6} {'Now':>8} "
+        f"{'Pattern':<10} {'Status':<8} {'Entry':>8} {'Dist':>6}"
     )
     lines = [header]
-    lines.append("-" * 48)
+    lines.append("-" * 58)
 
     for i, c in enumerate(candidates, 1):
-        pattern = PATTERN_LABELS.get(c.pattern_type or "", c.pattern_type or "-")
-        conf = f"{c.pattern_confidence:.0%}" if c.pattern_confidence is not None else "-"
-        chg = f"+{c.rank_change}" if c.rank_change > 0 else str(c.rank_change)
+        pattern = PATTERN_LABELS.get(
+            c.pattern_type or "", c.pattern_type or "-"
+        )
+        if len(pattern) > 9:
+            pattern = pattern[:9]
+        status = c.pattern_status or "-"
+        price = f"${c.current_price:.0f}" if c.current_price else "-"
+        entry = f"${c.entry_price:.0f}" if c.entry_price else "-"
+        if c.distance_to_entry_pct is not None:
+            dist = f"{c.distance_to_entry_pct:+.1f}%"
+        else:
+            dist = "-"
         lines.append(
-            f"{i:>3} {c.symbol:<6} {c.rank:>4} {chg:>4} "
-            f"{c.capital_flow_direction:>4} {pattern:<12} {conf:>5}"
+            f"{i:>3} {c.symbol:<6} {price:>8} "
+            f"{pattern:<10} {status:<8} {entry:>8} {dist:>6}"
         )
 
     table = "\n".join(lines)
 
     return {
-        "title": f"\U0001f4ca QU100 Top {len(candidates)} Stock Candidates",
-        "description": f"**{now} PT**\n```\n{table}\n```",
-        "color": 0x2196F3,  # blue
+        "title": (
+            f"\U0001f4ca QU100 Actionable Setups "
+            f"({len(candidates)})"
+        ),
+        "description": (
+            f"**{now} PT** | Dist = current vs entry\n"
+            f"```\n{table}\n```"
+        ),
+        "color": 0x2196F3,
     }
 
 
@@ -119,16 +134,46 @@ def _format_candidate_embed(candidate: StockCandidate) -> dict:
     direction_emoji = "\U0001f7e2" if is_bullish else "\U0001f534"
     vol_icon = "\u2705" if candidate.volume_confirmed else "\u274c"
 
+    # Current price context
+    price_str = f"${candidate.current_price:.2f}" if candidate.current_price else "-"
+    if candidate.distance_to_entry_pct is not None:
+        dist = candidate.distance_to_entry_pct
+        if abs(dist) < 1.0:
+            dist_label = f"AT ENTRY ({dist:+.1f}%)"
+        elif dist > 0:
+            dist_label = f"{dist:+.1f}% above entry"
+        else:
+            dist_label = f"{abs(dist):.1f}% below entry"
+    else:
+        dist_label = "-"
+
+    freshness = ""
+    if candidate.bars_since_breakout is not None:
+        if candidate.bars_since_breakout == 0:
+            freshness = "TODAY"
+        elif candidate.bars_since_breakout == 1:
+            freshness = "yesterday"
+        else:
+            freshness = f"{candidate.bars_since_breakout}d ago"
+
     fields = [
         {"name": "Pattern", "value": pattern_label, "inline": True},
-        {"name": "Status", "value": candidate.pattern_status or "-", "inline": True},
+        {
+            "name": "Status",
+            "value": (candidate.pattern_status or "-")
+            + (f" ({freshness})" if freshness else ""),
+            "inline": True,
+        },
         {"name": "Volume", "value": vol_icon, "inline": True},
+        {"name": "Now", "value": price_str, "inline": True},
     ]
 
     if candidate.entry_price is not None:
         fields.append(
             {"name": "Entry", "value": f"${candidate.entry_price:.2f}", "inline": True}
         )
+    fields.append({"name": "Dist", "value": dist_label, "inline": True})
+
     if candidate.stop_loss is not None:
         fields.append(
             {"name": "Stop Loss", "value": f"${candidate.stop_loss:.2f}", "inline": True}

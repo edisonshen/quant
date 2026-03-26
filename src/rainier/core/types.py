@@ -175,6 +175,11 @@ class StockCandidate:
     rr_ratio: float | None = None
     volume_confirmed: bool = False
 
+    # Actionability context (today's price vs pattern levels)
+    current_price: float | None = None
+    distance_to_entry_pct: float | None = None  # % from current price to entry
+    bars_since_breakout: int | None = None       # how many bars since confirmation
+
 
 @dataclass(frozen=True, slots=True)
 class PatternSignal:

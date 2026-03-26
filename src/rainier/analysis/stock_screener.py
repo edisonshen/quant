@@ -71,17 +71,20 @@ def screen_stocks(settings: Settings | None = None) -> list[StockCandidate]:
     # Build signal lookup by symbol
     signal_map = {s.symbol: s for s in signals}
 
-    # Detect patterns and compute composite scores
+    # Detect patterns and filter to actionable setups
     results: list[StockScreenResult] = []
     for sym, df in stock_data.items():
         signal = signal_map[sym]
         try:
-            patterns = detect_patterns(sym, df, config)
+            all_patterns = detect_patterns(sym, df, config)
         except Exception:
             log.exception("Pattern detection failed for %s, skipping", sym)
             continue
 
-        best_pattern = _best_pattern(patterns)
+        # Filter to patterns actionable from today's price
+        patterns = _filter_actionable(all_patterns, df)
+        # Best = first actionable (sorted by priority), not highest confidence
+        best_pattern = patterns[0] if patterns else None
         best_confidence = best_pattern.confidence if best_pattern else 0.0
 
         # Composite score
@@ -145,7 +148,13 @@ def screen_stocks(settings: Settings | None = None) -> list[StockCandidate]:
     # Sort by composite score descending
     results.sort(key=lambda r: r.composite_score, reverse=True)
 
-    candidates = [_to_candidate(r, signal_map) for r in results]
+    # Build price map for actionability context
+    price_map: dict[str, float] = {}
+    for sym, df in stock_data.items():
+        price_map[sym] = float(df["close"].iloc[-1])
+        price_map[f"_len_{sym}"] = float(len(df))
+
+    candidates = [_to_candidate(r, signal_map, price_map) for r in results]
     log.info(
         "Screening complete: %d candidates (%d strong_buy, %d buy, %d watch)",
         len(candidates),
@@ -397,6 +406,87 @@ def _best_pattern(
     return max(patterns, key=lambda p: p.confidence)
 
 
+def _filter_actionable(
+    patterns: list[PatternSignal],
+    df: pd.DataFrame,
+    max_bars_since_breakout: int = 10,
+    entry_proximity_pct: float = 0.05,
+) -> list[PatternSignal]:
+    """Filter patterns to only those actionable from today's price.
+
+    A pattern is actionable if:
+    - FORMING: price is approaching breakout level (within entry_proximity_pct)
+    - CONFIRMED recently: breakout happened within last max_bars_since_breakout bars
+      AND price hasn't already reached target or been stopped out
+      AND current price is still near entry (within entry_proximity_pct)
+
+    Returns patterns sorted by actionability (forming near breakout first,
+    then fresh confirmations).
+    """
+    if not patterns or df.empty:
+        return []
+
+    last_idx = len(df) - 1
+    current_price = float(df["close"].iloc[-1])
+    actionable: list[tuple[PatternSignal, float]] = []
+
+    for p in patterns:
+        is_bullish = p.direction == "bullish"
+
+        # Skip if already stopped out
+        if is_bullish and current_price < p.stop_loss:
+            continue
+        if not is_bullish and current_price > p.stop_loss:
+            continue
+
+        # Skip if target already reached
+        if is_bullish and current_price >= p.target_wave1:
+            continue
+        if not is_bullish and current_price <= p.target_wave1:
+            continue
+
+        if p.status == "forming":
+            # Forming: price must be approaching the entry level
+            # Use entry_price as reference (= neckline for most patterns)
+            ref_price = p.entry_price if p.entry_price > 0 else p.neckline
+            if ref_price <= 0:
+                continue
+            dist_to_entry = abs(current_price - ref_price) / ref_price
+            if dist_to_entry > entry_proximity_pct:
+                continue
+            # Must be approaching from correct side
+            if is_bullish and current_price > ref_price:
+                continue  # already past breakout level
+            if not is_bullish and current_price < ref_price:
+                continue
+            # Score: closer to entry = higher priority
+            priority = 2.0 - dist_to_entry
+            actionable.append((p, priority))
+
+        elif p.status == "confirmed":
+            # Confirmed: must be recent AND price near entry
+            if p.breakout_idx is None:
+                continue
+            bars_since = last_idx - p.breakout_idx
+            if bars_since > max_bars_since_breakout:
+                continue
+
+            dist_to_entry = abs(current_price - p.entry_price) / p.entry_price
+            if dist_to_entry > entry_proximity_pct:
+                # Price has moved too far from entry — not actionable
+                continue
+
+            # Score: fresher = higher, closer to entry = higher
+            freshness = 1.0 - (bars_since / max_bars_since_breakout)
+            proximity = 1.0 - min(dist_to_entry, 1.0)
+            priority = freshness * 0.6 + proximity * 0.4
+            actionable.append((p, priority))
+
+    # Sort by priority descending
+    actionable.sort(key=lambda x: x[1], reverse=True)
+    return [p for p, _ in actionable]
+
+
 # ---------------------------------------------------------------------------
 # Scoring + classification
 # ---------------------------------------------------------------------------
@@ -431,12 +521,27 @@ def _sector_direction(
 def _to_candidate(
     result: StockScreenResult,
     signal_map: dict[str, MoneyFlowSignal],
+    price_map: dict[str, float],
 ) -> StockCandidate:
     """Convert StockScreenResult to StockCandidate for downstream use."""
     signal = signal_map.get(result.symbol)
     rank_change = signal.rank_change if signal else 0
     capital_flow_direction = signal.capital_flow_direction if signal else "N"
     bp = result.best_pattern
+    current_price = price_map.get(result.symbol)
+
+    # Compute distance to entry
+    dist_to_entry = None
+    if current_price and bp and bp.entry_price:
+        dist_to_entry = round(
+            (current_price - bp.entry_price) / bp.entry_price * 100, 2
+        )
+
+    # Bars since breakout
+    bars_since = None
+    total_bars = price_map.get(f"_len_{result.symbol}")
+    if bp and bp.breakout_idx is not None and total_bars:
+        bars_since = int(total_bars) - 1 - bp.breakout_idx
 
     return StockCandidate(
         symbol=result.symbol,
@@ -455,4 +560,7 @@ def _to_candidate(
         target_price=result.target,
         rr_ratio=bp.rr_ratio if bp else None,
         volume_confirmed=bp.volume_confirmed if bp else False,
+        current_price=round(current_price, 2) if current_price else None,
+        distance_to_entry_pct=dist_to_entry,
+        bars_since_breakout=bars_since,
     )
