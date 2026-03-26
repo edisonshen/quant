@@ -229,9 +229,17 @@ def chart(ctx, symbol, tf, csv_path, start, end, output_path):
 @click.option("--slippage", default=None, type=float, help="Override slippage pct (e.g. 0.0005)")
 @click.option("--commission", default=None, type=float, help="Override commission per side")
 @click.option("--trades", "show_trades", is_flag=True, default=False, help="Show per-trade log")
+@click.option("--walk-forward", "walk_forward", is_flag=True, default=False,
+              help="Run walk-forward cross-validation")
+@click.option("--wf-train-bars", default=500, type=int, help="Walk-forward training window size")
+@click.option("--wf-test-bars", default=100, type=int, help="Walk-forward test window size")
+@click.option("--wf-step-bars", default=100, type=int, help="Walk-forward step between folds")
+@click.option("--wf-mode", default="anchored", type=click.Choice(["anchored", "rolling"]),
+              help="Walk-forward window mode")
 @click.pass_context
 def backtest(ctx, symbol, tf, csv_path, start, end, capital, export_path, sweep,
-             slippage, commission, show_trades):
+             slippage, commission, show_trades, walk_forward, wf_train_bars, wf_test_bars,
+             wf_step_bars, wf_mode):
     """Run a backtest on historical data."""
     from rainier.backtest.engine import run_backtest
     from rainier.backtest.report import format_report, format_trade_log, plot_equity_curve
@@ -256,19 +264,41 @@ def backtest(ctx, symbol, tf, csv_path, start, end, capital, export_path, sweep,
     if commission is not None:
         bt_config.commission_per_trade = commission
 
-    if sweep:
+    def emitter_factory(min_conf: float, min_rr: float):
+        from rainier.core.config import ScorerConfig, SignalConfig
+        sig_config = SignalConfig(
+            scorer=ScorerConfig(min_confidence=min_conf),
+            min_rr_ratio=min_rr,
+        )
+        return PinBarSignalEmitter(settings.analysis, sig_config)
+
+    if walk_forward:
+        # Walk-forward cross-validation mode
+        from rainier.backtest.walk_forward import format_walk_forward_report, run_walk_forward
+        from rainier.core.config import WalkForwardConfig
+
+        wf_cfg = WalkForwardConfig(
+            train_bars=wf_train_bars,
+            test_bars=wf_test_bars,
+            step_bars=wf_step_bars,
+            mode=wf_mode,
+        )
+
+        click.echo(
+            f"Running walk-forward: {symbol} {tf}, {len(df)} candles, "
+            f"mode={wf_mode}, train={wf_train_bars}, test={wf_test_bars}, step={wf_step_bars}..."
+        )
+
+        wf_result = run_walk_forward(
+            df, symbol, timeframe, emitter_factory, bt_config, wf_cfg,
+        )
+        click.echo(format_walk_forward_report(wf_result))
+
+    elif sweep:
         # Parameter sweep mode
         from rainier.backtest.sweep import format_sweep_table, run_sweep
 
         click.echo(f"Running parameter sweep: {symbol} {tf}, {len(df)} candles...")
-
-        def emitter_factory(min_conf: float, min_rr: float):
-            from rainier.core.config import ScorerConfig, SignalConfig
-            sig_config = SignalConfig(
-                scorer=ScorerConfig(min_confidence=min_conf),
-                min_rr_ratio=min_rr,
-            )
-            return PinBarSignalEmitter(settings.analysis, sig_config)
 
         sweep_result = run_sweep(
             df, symbol, timeframe, emitter_factory, bt_config,
