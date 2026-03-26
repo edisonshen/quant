@@ -194,6 +194,7 @@ class QuantUnicornConfig(BaseModel):
     session_ttl_hours: int = 12
     headless: bool = True
     timeout_ms: int = 30000
+    backfill_delay_seconds: float = 2.0
 
 
 class TradingViewConfig(BaseModel):
@@ -266,6 +267,7 @@ class Settings(BaseSettings):
     polygon_api_key: str = ""
     discord_webhook_url: str = ""
     discord_stock_webhook_url: str = ""
+    discord_backtest_webhook_url: str = ""
     notify_urls: str = ""  # Apprise URL(s), comma-separated
 
     # App config from YAML
@@ -289,7 +291,7 @@ class Settings(BaseSettings):
     # Notifications
     notify: NotifyConfig = NotifyConfig()
 
-    # Stock screener (QU100 + 蔡森 patterns)
+    # Stock screener (QU100 + Caisen patterns)
     stock_screener: StockScreenerConfig = StockScreenerConfig()
 
     # Backtesting
