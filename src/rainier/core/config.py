@@ -90,6 +90,14 @@ class BacktestConfig(BaseModel):
     )
 
 
+class WalkForwardConfig(BaseModel):
+    train_bars: int = 500
+    test_bars: int = 100
+    step_bars: int = 100  # how far to advance between folds
+    mode: str = "anchored"  # "anchored" or "rolling"
+    optimize_metric: str = "sharpe_ratio"  # metric to pick best params per fold
+
+
 class RiskConfig(BaseModel):
     max_positions: int = 3
     max_daily_loss: float = 1000.0

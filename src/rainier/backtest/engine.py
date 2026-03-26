@@ -131,7 +131,7 @@ def run_backtest(
             closed_trades.append(record)
             equity_curve.append(capital)
 
-    return _compute_metrics(closed_trades, equity_curve, config)
+    return compute_metrics(closed_trades, equity_curve, config)
 
 
 # ---------------------------------------------------------------------------
@@ -305,7 +305,7 @@ def _close_trade(
 # ---------------------------------------------------------------------------
 
 
-def _compute_metrics(
+def compute_metrics(
     trades: list[TradeRecord],
     equity_curve: list[float],
     config: BacktestConfig,
