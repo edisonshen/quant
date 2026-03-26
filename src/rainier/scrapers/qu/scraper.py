@@ -16,7 +16,7 @@ from rainier.core.models import MoneyFlowSnapshot, Stock, StockCapitalFlow
 from rainier.scrapers.base import BaseScraper, ScrapeResult, goto_with_retry
 from rainier.scrapers.browser import BrowserManager
 from rainier.scrapers.qu import selectors as sel
-from rainier.scrapers.qu.auth import ensure_authenticated, get_session_path, is_session_valid
+from rainier.scrapers.qu.auth import ensure_authenticated, get_session_path, is_session_valid, login
 from rainier.scrapers.qu.parsers import (
     QU100Row,
     parse_capital_flow_rows,
@@ -60,6 +60,9 @@ class QUScraper(BaseScraper):
             self._page = await self._page_cm.__aenter__()
             await ensure_authenticated(self._page)
 
+            # Verify session works by navigating to QU100 page
+            await self._verify_session()
+
     async def teardown(self) -> None:
         """Close the page/context."""
         if self._page_cm:
@@ -90,10 +93,22 @@ class QUScraper(BaseScraper):
         # Phase A: QU100 table (Top100 + Bottom100)
         if session_name:
             if dates:
-                # Multi-date scrape
-                for date_str in dates:
-                    await self._scrape_qu100(session_name, now, result, target_date=date_str)
-                    await asyncio.sleep(random.uniform(1.0, 2.0))
+                # Multi-date scrape with per-date error handling
+                delay = self._qu_config.backfill_delay_seconds
+                for i, date_str in enumerate(dates):
+                    try:
+                        await self._scrape_qu100(
+                            session_name, now, result, target_date=date_str,
+                        )
+                    except Exception as exc:
+                        msg = f"Skipping {date_str}: {exc}"
+                        self.log.warning("backfill_skip", date=date_str, error=str(exc))
+                        result.errors.append(msg)
+                    if i < len(dates) - 1:
+                        wait = delay + random.uniform(0, delay * 0.25)
+                        remaining = len(dates) - i - 1
+                        self.log.info("backfill_delay", seconds=f"{wait:.1f}", remaining=remaining)
+                        await asyncio.sleep(wait)
             else:
                 await self._scrape_qu100(session_name, now, result)
 
@@ -107,6 +122,36 @@ class QUScraper(BaseScraper):
 
         result.finished_at = datetime.now(timezone.utc)
         return result
+
+    # ------------------------------------------------------------------
+    # Session verification
+    # ------------------------------------------------------------------
+
+    async def _verify_session(self) -> None:
+        """Navigate to QU100 and verify the session is live.
+
+        If the saved session is stale (server-side), force a fresh login.
+        """
+        page = self._page
+        await goto_with_retry(page, self._qu_config.url)
+
+        # Check if we got redirected to signin
+        if "signin" in (page.url or ""):
+            self.log.warning("session_stale_redirected", url=page.url)
+            await login(page)
+            await goto_with_retry(page, self._qu_config.url)
+            return
+
+        # Check if QU100 table is visible (proves auth works)
+        try:
+            await page.wait_for_selector(sel.QU100_TABLE, timeout=10000)
+            self.log.info("session_verified")
+        except Exception:
+            self.log.warning("session_stale_no_table", url=page.url)
+            await login(page)
+            await goto_with_retry(page, self._qu_config.url)
+            await page.wait_for_selector(sel.QU100_TABLE, timeout=15000)
+            self.log.info("session_verified_after_relogin")
 
     # ------------------------------------------------------------------
     # CDP auto-auth
@@ -193,7 +238,7 @@ class QUScraper(BaseScraper):
             ("bottom100", sel.BOTTOM100_BUTTON),
         ]:
             try:
-                # Click the ranking toggle, then 查询 to trigger data load
+                # Click the ranking toggle, then Search button to trigger data load
                 await page.click(button_sel)
                 await asyncio.sleep(0.3)
                 await page.click(sel.SEARCH_BUTTON)
@@ -253,20 +298,42 @@ class QUScraper(BaseScraper):
                     if row.industry and stock.industry != row.industry:
                         stock.industry = row.industry
 
-                snapshot = MoneyFlowSnapshot(
-                    captured_at=captured_at,
-                    capture_session=session_name,
-                    data_date=data_date or captured_at.date(),
-                    ranking_type=ranking_type,
-                    stock_id=stock.id,
-                    rank=row.rank,
-                    daily_change=row.daily_change,
-                    sector=row.sector,
-                    industry=row.industry,
-                    long_short=row.long_short,
-                    raw_data=row.raw,
-                )
-                db.add(snapshot)
+                effective_date = data_date or captured_at.date()
+
+                # Upsert: one row per (data_date, ranking_type, rank)
+                # e.g. 3/26 top100 rank #1 = exactly one stock, latest session wins
+                existing = db.execute(
+                    select(MoneyFlowSnapshot).where(
+                        MoneyFlowSnapshot.data_date == effective_date,
+                        MoneyFlowSnapshot.ranking_type == ranking_type,
+                        MoneyFlowSnapshot.rank == row.rank,
+                    )
+                ).scalar_one_or_none()
+
+                if existing:
+                    existing.symbol = row.symbol
+                    existing.captured_at = captured_at
+                    existing.capture_session = session_name
+                    existing.daily_change = row.daily_change
+                    existing.sector = row.sector
+                    existing.industry = row.industry
+                    existing.long_short = row.long_short
+                    existing.raw_data = row.raw
+                else:
+                    snapshot = MoneyFlowSnapshot(
+                        captured_at=captured_at,
+                        capture_session=session_name,
+                        data_date=effective_date,
+                        ranking_type=ranking_type,
+                        symbol=row.symbol,
+                        rank=row.rank,
+                        daily_change=row.daily_change,
+                        sector=row.sector,
+                        industry=row.industry,
+                        long_short=row.long_short,
+                        raw_data=row.raw,
+                    )
+                    db.add(snapshot)
                 count += 1
 
         return count
@@ -354,7 +421,7 @@ class QUScraper(BaseScraper):
                     continue
 
                 flow = StockCapitalFlow(
-                    stock_id=stock.id,
+                    symbol=symbol,
                     captured_at=captured_at,
                     flow_date=flow_date,
                     period_type=row.period_type,

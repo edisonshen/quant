@@ -2,7 +2,7 @@
 
 Layer 1: Money flow screening from QU100 data
 Layer 2: Sector trend analysis + boost
-Layer 3: Technical pattern detection (蔡森 methodology)
+Layer 3: Technical pattern detection (Caisen methodology)
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from rainier.analysis.sector_analyzer import analyze_sectors, get_sector_boost
 from rainier.analysis.stock_patterns import detect_patterns
 from rainier.core.config import Settings, StockScreenerConfig, get_settings
 from rainier.core.database import get_session
-from rainier.core.models import MoneyFlowSnapshot, Stock, StockCapitalFlow
+from rainier.core.models import MoneyFlowSnapshot, StockCapitalFlow
 from rainier.core.types import (
     MoneyFlowSignal,
     PatternSignal,
@@ -188,16 +188,13 @@ def _screen_money_flow(session: Session) -> list[MoneyFlowSignal]:
 
     rows = (
         session.query(
-            Stock.symbol,
-            Stock.id.label("stock_id"),
-            Stock.name,
+            MoneyFlowSnapshot.symbol,
             MoneyFlowSnapshot.rank,
             MoneyFlowSnapshot.daily_change,
             MoneyFlowSnapshot.long_short,
             MoneyFlowSnapshot.sector,
             MoneyFlowSnapshot.industry,
         )
-        .join(Stock, MoneyFlowSnapshot.stock_id == Stock.id)
         .filter(
             MoneyFlowSnapshot.ranking_type == "top100",
             MoneyFlowSnapshot.long_short == "Long in",
@@ -215,7 +212,6 @@ def _screen_money_flow(session: Session) -> list[MoneyFlowSignal]:
     signals: list[MoneyFlowSignal] = []
     for row in rows:
         symbol = row.symbol
-        stock_id = row.stock_id
         rank = row.rank
         daily_change = row.daily_change or 0
         long_short = row.long_short or "Long in"
@@ -231,7 +227,7 @@ def _screen_money_flow(session: Session) -> list[MoneyFlowSignal]:
                 StockCapitalFlow.rank,
             )
             .filter(
-                StockCapitalFlow.stock_id == stock_id,
+                StockCapitalFlow.symbol == symbol,
                 StockCapitalFlow.period_type == "daily",
             )
             .order_by(StockCapitalFlow.flow_date.desc())
@@ -264,7 +260,6 @@ def _screen_money_flow(session: Session) -> list[MoneyFlowSignal]:
         signals.append(
             MoneyFlowSignal(
                 symbol=symbol,
-                stock_id=stock_id,
                 rank=rank,
                 rank_change=daily_change,
                 long_short=long_short,
@@ -336,7 +331,6 @@ def _apply_sector_boost(
         if boost > 0:
             signal = MoneyFlowSignal(
                 symbol=signal.symbol,
-                stock_id=signal.stock_id,
                 rank=signal.rank,
                 rank_change=signal.rank_change,
                 long_short=signal.long_short,
