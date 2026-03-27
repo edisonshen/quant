@@ -23,8 +23,8 @@ REPORT_PATH = Path(__file__).parent.parent / "reports" / "tqqq_strategy_demo.htm
 PAGES_PATH = Path(__file__).parent.parent / "docs" / "tqqq_strategy_demo.html"
 TOP_N = 5
 
-PLOTLY_VERSION = plotly.__version__
-PLOTLY_CDN = f"https://cdn.plot.ly/plotly-{PLOTLY_VERSION}.min.js"
+# Use latest stable CDN version (local plotly 6.x isn't on CDN yet)
+PLOTLY_CDN = "https://cdn.plot.ly/plotly-2.35.2.min.js"
 
 
 def fetch_data(years: int = 10) -> pd.DataFrame:
@@ -401,7 +401,7 @@ def build_html(top5: list, benchmarks: list) -> str:
     {comparison_html}
 
     <p class="meta">Generated {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} PT |
-    Plotly {PLOTLY_VERSION} (CDN) | Data: yfinance</p>
+    Plotly 2.35.2 (CDN) | Data: yfinance</p>
 </body>
 </html>"""
 
