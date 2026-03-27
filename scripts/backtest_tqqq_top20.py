@@ -14,7 +14,7 @@ from itertools import product
 from pathlib import Path
 
 INITIAL_CAPITAL = 100_000
-CASH_YIELD = 0.045
+CASH_YIELD = 0.01
 MIN_PERIOD = 2
 MAX_PERIOD = 50
 TOP_N = 20
