@@ -19,6 +19,9 @@ ts() { date '+%Y-%m-%d %H:%M:%S'; }
 
 echo "$(ts) [START] $JOB_NAME" >> "$LOG_FILE"
 
+# Always cd to project dir first — cron starts in / and `uv run` needs pyproject.toml
+cd "$PROJECT_DIR" || exit 1
+
 # Run command in subshell, capture output to temp file (avoids shell-escaping issues)
 TMPFILE=$(mktemp)
 ( eval "$@" ) > "$TMPFILE" 2>&1
