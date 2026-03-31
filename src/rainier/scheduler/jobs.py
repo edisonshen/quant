@@ -93,16 +93,15 @@ def sync(config_path: Path = DEFAULT_CONFIG, project_dir: Path | None = None) ->
         if uv_path:
             cmd = cmd.replace("uv run", f"{uv_path} run")
 
-        # Build the cron command — use wrapper if available
-        inner_cmd = f"cd {project_dir} && {cmd}"
+        # Build the cron command — wrapper does cd to project_dir automatically
         if wrapper_path.exists() and discord_webhook:
             command = (
                 f"{wrapper_path} {name} {log_path} "
                 f"{discord_webhook} "
-                f'"{inner_cmd}"'
+                f'"{cmd}"'
             )
         else:
-            command = f"{inner_cmd} >> {log_path} 2>&1"
+            command = f"cd {project_dir} && {cmd} >> {log_path} 2>&1"
 
         cron_line = f"{job['schedule']} {command} {JOB_TAG} {name}"
 
