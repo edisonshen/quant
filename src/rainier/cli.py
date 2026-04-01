@@ -1248,7 +1248,7 @@ def _post_scrape_screener(settings, session: str) -> None:
     )
 
     try:
-        payloads = _build_payloads(candidates)
+        payloads = _build_payloads(candidates, session=session)
         for payload in payloads:
             resp = httpx.post(webhook, json=payload, timeout=10)
             resp.raise_for_status()
