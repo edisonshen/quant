@@ -188,14 +188,15 @@ class QUScraper(BaseScraper):
         # Navigate to QU100 page
         if "quantunicorn.com/products" not in url:
             await goto_with_retry(page, self._qu_config.url)
-            await page.wait_for_load_state("domcontentloaded", timeout=15000)
+            await page.wait_for_load_state(
+                "domcontentloaded", timeout=15000
+            )
 
         # Check if redirected to signin — cookies didn't work
         if "signin" in (page.url or ""):
             self.log.warning("cdp_session_expired", url=page.url)
             await login(page)
             await goto_with_retry(page, self._qu_config.url)
-            return
 
         # Detect Cloudflare challenge page
         title = await page.title()
@@ -211,39 +212,45 @@ class QUScraper(BaseScraper):
             self.log.warning("cdp_session_expired", url=page.url)
             await login(page)
             await goto_with_retry(page, self._qu_config.url)
-            return
 
-        # Wait briefly for the table to appear (React rendering)
-        try:
-            await page.wait_for_selector(sel.QU100_TABLE, timeout=5000)
-            self.log.info("cdp_auth_ok")
-            return
-        except Exception:
-            pass
-
-        # Table not visible — click Search button to load data
-        search_btn = await page.query_selector(sel.SEARCH_BUTTON)
-        if search_btn:
-            self.log.info("cdp_clicking_search_button")
-            await search_btn.click()
+        # Try to load the table — click Search button first
+        table = await page.query_selector(sel.QU100_TABLE)
+        if table is None:
+            search_btn = await page.query_selector(sel.SEARCH_BUTTON)
+            if search_btn:
+                self.log.info("cdp_clicking_search_button")
+                await search_btn.click()
             try:
-                await page.wait_for_selector(sel.QU100_TABLE, timeout=10000)
+                await page.wait_for_selector(
+                    sel.QU100_TABLE, timeout=10000
+                )
                 self.log.info("cdp_auth_ok")
                 return
             except Exception:
                 pass
 
-        # Still no table — try clicking login button if present
-        login_btn = await page.query_selector("text=注册/登录")
-        if login_btn:
-            self.log.info("cdp_clicking_login_button")
-            await login_btn.click()
-            await page.wait_for_load_state("domcontentloaded", timeout=10000)
+        # Still no table — need to login
+        if await page.query_selector(sel.QU100_TABLE) is None:
+            login_btn = await page.query_selector("text=注册/登录")
+            if login_btn:
+                self.log.info("cdp_clicking_login_button")
+                await page.evaluate("el => el.click()", login_btn)
+                await page.wait_for_load_state(
+                    "domcontentloaded", timeout=10000
+                )
+            if "signin" in (page.url or ""):
+                self.log.info("cdp_needs_login", url=page.url)
+                await login(page)
+                await goto_with_retry(page, self._qu_config.url)
 
-        if "signin" in (page.url or ""):
-            self.log.warning("cdp_needs_login", url=page.url)
-            await login(page)
-            await goto_with_retry(page, self._qu_config.url)
+            # After login, click Search to load the table
+            search_btn = await page.query_selector(sel.SEARCH_BUTTON)
+            if search_btn:
+                await search_btn.click()
+            await page.wait_for_selector(
+                sel.QU100_TABLE, timeout=15000
+            )
+            self.log.info("cdp_auth_ok_after_login")
 
     # ------------------------------------------------------------------
     # Phase A: QU100 table
@@ -273,20 +280,15 @@ class QUScraper(BaseScraper):
             await login(page)
             await goto_with_retry(page, self._qu_config.url)
 
-        # Change date if requested (before initial search)
+        # Change date if requested, then click Search to load data
         if target_date:
             await self._set_date(target_date)
+        search_btn = await page.query_selector(sel.SEARCH_BUTTON)
+        if search_btn:
+            await search_btn.click()
 
-        # Wait for the table to appear (date change or initial load triggers it)
-        try:
-            await page.wait_for_selector(sel.QU100_TABLE, timeout=10000)
-        except Exception:
-            # Table not visible — try clicking Search button to load data
-            search_btn = await page.query_selector(sel.SEARCH_BUTTON)
-            if search_btn:
-                self.log.info("scrape_clicking_search_button")
-                await search_btn.click()
-            await page.wait_for_selector(sel.QU100_TABLE, timeout=15000)
+        # Wait for the table to appear
+        await page.wait_for_selector(sel.QU100_TABLE, timeout=15000)
 
         # Read the data date from the date picker (e.g., "2026-03-13")
         data_date_str = await page.get_attribute(sel.DATE_INPUT, "value")
@@ -301,9 +303,46 @@ class QUScraper(BaseScraper):
             ("bottom100", sel.BOTTOM100_BUTTON),
         ]:
             try:
-                # Click the ranking toggle — table auto-refreshes
+                # Capture current first-row symbol to detect table refresh
+                old_first = None
+                try:
+                    old_rows = await page.evaluate(sel.QU100_EXTRACT_JS)
+                    if old_rows:
+                        old_first = old_rows[0].get("symbol")
+                except Exception:
+                    pass
+
+                # Click toggle, then Search button (required per QU100 UI)
                 await page.click(button_sel)
-                await page.wait_for_selector(sel.QU100_TABLE_ROW)
+                search_btn = await page.query_selector(sel.SEARCH_BUTTON)
+                if search_btn:
+                    await search_btn.click()
+
+                # Wait for table to refresh with new data
+                if old_first:
+                    for _ in range(30):
+                        await asyncio.sleep(0.5)
+                        try:
+                            new_rows = await page.evaluate(
+                                sel.QU100_EXTRACT_JS
+                            )
+                            if (
+                                new_rows
+                                and new_rows[0].get("symbol") != old_first
+                            ):
+                                break
+                        except Exception:
+                            pass
+                    else:
+                        self.log.warning(
+                            "table_refresh_timeout",
+                            ranking_type=ranking_type,
+                        )
+                else:
+                    await page.wait_for_selector(
+                        sel.QU100_TABLE_ROW, timeout=15000
+                    )
+
                 raw_rows = await page.evaluate(sel.QU100_EXTRACT_JS)
                 parsed = parse_qu100_rows(raw_rows)
                 count = self._persist_qu100(parsed, ranking_type, session_name, captured_at, data_date)
