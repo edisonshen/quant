@@ -6,6 +6,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 import click
+import numpy as np
 import pandas as pd
 
 from rainier.core.config import load_settings
@@ -2018,3 +2019,81 @@ def ml_regime(features_path, symbols, save_model):
     if save_model:
         detector.save(Path(save_model))
         click.echo(f"\nModel saved to: {save_model}")
+
+
+@ml.command(name="select-features")
+@click.argument("features_path", type=click.Path(exists=True))
+@click.option("--label", default="label_5d", help="Label column to optimize for")
+@click.option("--folds", default=5, type=int, help="Walk-forward CV folds")
+@click.option("--min-features", default=5, type=int, help="Minimum features to test")
+@click.option("--max-features", default=40, type=int, help="Maximum features to test")
+@click.option(
+    "--stability", default=0.6, type=float,
+    help="Stability threshold (fraction of folds a feature must appear in)",
+)
+@click.option(
+    "--methods", default="mdi,mda",
+    help="Importance methods: mdi,mda,shap (comma-separated)",
+)
+@click.option("--output", default=None, help="Save results to JSON")
+def ml_select_features(
+    features_path, label, folds, min_features, max_features, stability, methods, output,
+):
+    """Select optimal feature set using nested walk-forward CV.
+
+    Runs feature importance inside each training fold (no data leakage),
+    then ranks features by stability across folds. Sweeps feature counts
+    to find the set that maximizes out-of-sample profit factor.
+    """
+    from rainier.ml.feature_selector import SelectionConfig, select_features
+
+    method_list = [m.strip() for m in methods.split(",")]
+    config = SelectionConfig(
+        label_col=label,
+        n_folds=folds,
+        min_features=min_features,
+        max_features=max_features,
+        stability_threshold=stability,
+        methods=method_list,
+    )
+    output_path = Path(output) if output else None
+
+    click.echo(f"Feature selection: {features_path}")
+    click.echo(f"Label: {label}, Folds: {folds}, Methods: {method_list}")
+    click.echo(f"Stability threshold: {stability:.0%}")
+    click.echo()
+
+    result = select_features(
+        parquet_path=Path(features_path),
+        config=config,
+        output_path=output_path,
+    )
+
+    # --- Sweep results table ---
+    click.echo("--- Feature Count Sweep ---")
+    click.echo(f"{'Features':>10s}  {'Accuracy':>10s}  {'Acc Std':>10s}  {'Profit Factor':>14s}")
+    for s in result.sweep_results:
+        pf_str = f"{s['profit_factor']:.2f}" if np.isfinite(s["profit_factor"]) else "inf"
+        click.echo(
+            f"{s['n_features']:>10d}  {s['accuracy']:>10.3f}  "
+            f"{s['accuracy_std']:>10.3f}  {pf_str:>14s}"
+        )
+
+    # --- Stability rankings ---
+    click.echo("\n--- Feature Stability (top 20) ---")
+    click.echo(f"{'Feature':30s}  {'Stability':>10s}  {'Mean Rank':>10s}")
+    for r in result.rankings[:20]:
+        click.echo(f"{r.name:30s}  {r.stability:>10.0%}  {r.mean_rank:>10.1f}")
+
+    # --- Selected features ---
+    click.echo(f"\n--- Optimal Feature Set ({result.optimal_n} features) ---")
+    for i, feat in enumerate(result.selected_features, 1):
+        click.echo(f"  {i:2d}. {feat}")
+
+    click.echo(
+        f"\nTotal: {result.total_features} -> {result.optimal_n} features "
+        f"({result.total_features - result.optimal_n} dropped)"
+    )
+
+    if output_path:
+        click.echo(f"Results saved to: {output_path}")
