@@ -131,6 +131,26 @@ ibkr:
   timeout: 30
   readonly: true
 
+# --- External APIs ---
+
+apis:
+  x:
+    enabled: false                   # Set to true + add X_API_BEARER_TOKEN in .env
+    poll_interval_minutes: 15
+    max_results_per_user: 10
+    rate_limit_delay: 16.0           # X free tier: ~1 req/15s
+    discord_webhook_url: ""          # Override; falls back to alerts.discord.webhook_url
+    tracked_accounts:
+      - username: mingchikuo
+        label: "Ming-Chi Kuo"
+        vip: true
+      - username: elonmusk
+        label: "Elon Musk"
+        vip: true
+      - username: unusual_whales
+        label: "Unusual Whales"
+        vip: false
+
 # --- LLM analysis ---
 
 llm:
