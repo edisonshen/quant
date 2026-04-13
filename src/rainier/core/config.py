@@ -178,6 +178,37 @@ class AlertsConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# External API configs (centralized under `apis` section)
+# ---------------------------------------------------------------------------
+
+
+class XTrackedAccount(BaseModel):
+    """An X/Twitter account to monitor for trading intelligence."""
+
+    username: str
+    label: str = ""  # display name for Discord alerts
+    vip: bool = False  # triggers Discord alert on new tweet
+
+
+class XApiConfig(BaseModel):
+    """X/Twitter API v2 configuration."""
+
+    enabled: bool = False
+    poll_interval_minutes: int = 15
+    max_results_per_user: int = 10
+    rate_limit_delay: float = 16.0  # X free tier: ~1 req/15s
+    discord_webhook_url: str = ""  # override; falls back to alerts.discord.webhook_url
+    tracked_accounts: list[XTrackedAccount] = Field(default_factory=list)
+
+
+class ApisConfig(BaseModel):
+    """All external API configurations in one place."""
+
+    x: XApiConfig = XApiConfig()
+    # Future: polygon, newsapi, alpaca, etc.
+
+
+# ---------------------------------------------------------------------------
 # Scraping config (stocks / QuantUnicorn)
 # ---------------------------------------------------------------------------
 
@@ -278,6 +309,7 @@ class Settings(BaseSettings):
     discord_stock_webhook_url: str = ""
     discord_backtest_webhook_url: str = ""
     notify_urls: str = ""  # Apprise URL(s), comma-separated
+    x_api_bearer_token: str = ""  # X/Twitter API v2 bearer token
 
     # App config from YAML
     app: AppConfig = AppConfig()
@@ -308,6 +340,9 @@ class Settings(BaseSettings):
 
     # IBKR (Interactive Brokers) data connection
     ibkr: IBKRConfig = IBKRConfig()
+
+    # External APIs (centralized)
+    apis: ApisConfig = ApisConfig()
 
 
 class InstrumentConfig(BaseModel):
@@ -366,6 +401,14 @@ def load_settings(config_path: Path | None = None) -> Settings:
         kwargs["backtest"] = BacktestConfig(**yaml_config["backtest"])
     if "ibkr" in yaml_config:
         kwargs["ibkr"] = IBKRConfig(**yaml_config["ibkr"])
+    if "apis" in yaml_config:
+        raw_apis = yaml_config["apis"]
+        x_raw = raw_apis.get("x", {})
+        # Parse tracked_accounts list into XTrackedAccount objects
+        tracked = [XTrackedAccount(**a) for a in x_raw.pop("tracked_accounts", [])]
+        kwargs["apis"] = ApisConfig(
+            x=XApiConfig(**x_raw, tracked_accounts=tracked),
+        )
 
     settings = Settings(**kwargs)
 
