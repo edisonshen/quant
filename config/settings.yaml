@@ -144,9 +144,6 @@ apis:
       - username: mingchikuo
         label: "Ming-Chi Kuo"
         vip: true
-      - username: elonmusk
-        label: "Elon Musk"
-        vip: true
       - username: unusual_whales
         label: "Unusual Whales"
         vip: false
